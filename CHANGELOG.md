@@ -8,8 +8,10 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 ## [Development]
 <!-- Do Not Erase This Section - Used for tracking unreleased changes -->
 
+## [0.50.6 - 2026-01-27]
+
 ### Fixed
-- **Mypy**: Declare UMAP mixin weighted-edge DataFrame attributes for type checking.
+- **GFQL / hypergraph**: Avoid `DataFrame.style` access when `return_as` yields a DataFrame, preventing Jinja2 import errors in minimal environments without Jinja2 (PR #909).
 
 ### Tests
 - **Temporal**: Added datetime unit parity coverage (ms/us/ns) for ring layouts, GFQL time ring layouts, and temporal comparison predicates; relaxed honeypot hypergraph datetime unit expectations.

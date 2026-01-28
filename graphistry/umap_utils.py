@@ -29,10 +29,8 @@ logger = setup_logger(__name__)
 DataFrameLike = Union[pd.DataFrame, Any]
 
 if TYPE_CHECKING:
-    class _UMAPMixinBase(FeatureMixin):
-        _weighted_edges_df: Optional[DataFrameLike]
-        _weighted_edges_df_from_nodes: Optional[DataFrameLike]
-        _weighted_edges_df_from_edges: Optional[DataFrameLike]
+    class _UMAPMixinBase(FeatureMixin, Plottable):
+        pass
 
     MIXIN_BASE = _UMAPMixinBase
 else:
