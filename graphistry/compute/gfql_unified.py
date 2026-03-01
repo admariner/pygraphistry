@@ -1,8 +1,9 @@
 """GFQL unified entrypoint for chains and DAGs"""
+# ruff: noqa: E501
 
-from typing import List, Union, Optional, Dict, Any
+from typing import List, Union, Optional, Dict, Any, Sequence
 from graphistry.Plottable import Plottable
-from graphistry.Engine import EngineAbstract
+from graphistry.Engine import Engine, EngineAbstract
 from graphistry.util import setup_logger
 from .ast import ASTObject, ASTLet, ASTNode, ASTEdge
 from .chain import Chain, chain as chain_impl
@@ -16,18 +17,21 @@ from .gfql.policy import (
     QueryType,
     expand_policy
 )
+from graphistry.compute.gfql.same_path_types import (
+    WhereComparison,
+    normalize_where_entries,
+    parse_where_json,
+)
+from graphistry.compute.gfql.df_executor import (
+    build_same_path_inputs,
+    execute_same_path_chain,
+)
+from graphistry.compute.validate.validate_schema import validate_chain_schema
 
 logger = setup_logger(__name__)
 
 
 def detect_query_type(query: Any) -> QueryType:
-    """Detect query type for policy context.
-
-    Returns:
-        'dag' for ASTLet queries
-        'chain' for list/Chain queries
-        'single' for single ASTObject queries
-    """
     if isinstance(query, ASTLet):
         return "dag"
     elif isinstance(query, (list, Chain)):
@@ -40,7 +44,8 @@ def gfql(self: Plottable,
          query: Union[ASTObject, List[ASTObject], ASTLet, Chain, dict],
          engine: Union[EngineAbstract, str] = EngineAbstract.AUTO,
          output: Optional[str] = None,
-         policy: Optional[Dict[str, PolicyFunction]] = None) -> Plottable:
+         policy: Optional[Dict[str, PolicyFunction]] = None,
+         where: Optional[Sequence[WhereComparison]] = None) -> Plottable:
     """
     Execute a GFQL query - either a chain or a DAG
 
@@ -51,6 +56,7 @@ def gfql(self: Plottable,
     :param engine: Execution engine (auto, pandas, cudf)
     :param output: For DAGs, name of binding to return (default: last executed)
     :param policy: Optional policy hooks for external control (preload, postload, precall, postcall phases)
+    :param where: Optional same-path constraints for list/Chain queries
     :returns: Resulting Plottable
     :rtype: Plottable
 
@@ -134,6 +140,13 @@ def gfql(self: Plottable,
         from graphistry.compute.chain import Chain
         result = g.gfql(Chain([n({'type': 'person'}), e(), n()]))
 
+        # As list with WHERE
+        from graphistry.compute.gfql.same_path_types import col, compare
+        result = g.gfql(
+            [n(name="a"), e(), n(name="b")],
+            where=[compare(col("a", "x"), "==", col("b", "y"))],
+        )
+
     **Example: DAG query**
 
     ::
@@ -180,30 +193,31 @@ def gfql(self: Plottable,
         # Dict → DAG execution (convenience)
         g.gfql({'people': n({'type': 'person'})})
     """
-    # Create ExecutionContext at start
     context = ExecutionContext()
 
-    # Recursion prevention - check if we're already in a policy execution
     if policy and context.policy_depth >= 1:
         logger.debug('Policy disabled due to recursion depth limit (depth=%d)', context.policy_depth)
-        policy = None  # Disable policy for recursive calls
+        policy = None
 
-    # Set depth for this execution
     policy_depth = context.policy_depth
     if policy:
         context.policy_depth = policy_depth + 1
 
-    # Expand policy shortcuts to full hook names (e.g., 'pre' → all pre* hooks)
     expanded_policy: Optional[PolicyDict] = None
     if policy:
         expanded_policy = expand_policy(policy)
 
     try:
-        # Get current execution depth (0 for top-level)
+        where_param: Optional[List[WhereComparison]] = None
+        if where is not None:
+            if isinstance(where, (list, tuple)):
+                where_param = normalize_where_entries(where)
+            else:
+                raise ValueError(f"where must be a list of comparisons, got {type(where).__name__}")
+
         current_depth = context.execution_depth
         current_path = context.operation_path
 
-        # Preload policy phase - before any processing
         if expanded_policy and 'preload' in expanded_policy:
             policy_context: PolicyContext = {
                 'phase': 'preload',
@@ -218,18 +232,30 @@ def gfql(self: Plottable,
             }
 
             try:
-                # Policy can only accept (None) or deny (exception)
                 expanded_policy['preload'](policy_context)
-
             except PolicyException as e:
-                # Enrich exception with context if not already set
                 if e.query_type is None:
                     e.query_type = policy_context.get('query_type')
                 raise
 
-        # Handle dict convenience first (convert to ASTLet)
-        if isinstance(query, dict):
-            # Auto-wrap ASTNode and ASTEdge values in Chain for GraphOperation compatibility
+        if where_param and isinstance(query, (dict, ASTLet)):
+            raise ValueError("where must be provided inside dict chain under the 'where' key")
+
+        if isinstance(query, dict) and "chain" in query:
+            chain_items: List[ASTObject] = []
+            for item in query["chain"]:
+                if isinstance(item, dict):
+                    from .ast import from_json
+                    chain_items.append(from_json(item))
+                elif isinstance(item, ASTObject):
+                    chain_items.append(item)
+                else:
+                    raise TypeError(f"Unsupported chain entry type: {type(item)}")
+            dict_where = parse_where_json(query.get("where"))
+            if not chain_items and dict_where:
+                raise ValueError("where requires at least one named node/edge step; empty chains have no aliases")
+            query = Chain(chain_items, where=dict_where)
+        elif isinstance(query, dict):
             wrapped_dict = {}
             for key, value in query.items():
                 if isinstance(value, (ASTNode, ASTEdge)):
@@ -239,16 +265,12 @@ def gfql(self: Plottable,
                     wrapped_dict[key] = value
             query = ASTLet(wrapped_dict)  # type: ignore
 
-        # Push execution depth and operation path before dispatching
-        # This moves us from depth 0 (gfql entry) to depth 1 (chain/let execution)
         context.push_depth()
 
-        # Determine query type segment for operation path
         query_segment = 'dag' if isinstance(query, ASTLet) else 'chain'
         context.push_path(query_segment)
 
         try:
-            # Dispatch based on type - check specific types before generic
             if isinstance(query, ASTLet):
                 logger.debug('GFQL executing as DAG')
                 return chain_let_impl(self, query, engine, output, policy=expanded_policy, context=context)
@@ -256,19 +278,24 @@ def gfql(self: Plottable,
                 logger.debug('GFQL executing as Chain')
                 if output is not None:
                     logger.warning('output parameter ignored for chain queries')
-                return chain_impl(self, query.chain, engine, policy=expanded_policy, context=context)
+                if where_param:
+                    if query.where:
+                        raise ValueError("where provided for Chain that already includes where")
+                    query = Chain(query.chain, where=where_param)
+                return _chain_dispatch(self, query, engine, expanded_policy, context)
             elif isinstance(query, ASTObject):
-                # Single ASTObject -> execute as single-item chain
                 logger.debug('GFQL executing single ASTObject as chain')
                 if output is not None:
                     logger.warning('output parameter ignored for chain queries')
-                return chain_impl(self, [query], engine, policy=expanded_policy, context=context)
+                return _chain_dispatch(self, Chain([query], where=where_param), engine, expanded_policy, context)
             elif isinstance(query, list):
                 logger.debug('GFQL executing list as chain')
                 if output is not None:
                     logger.warning('output parameter ignored for chain queries')
 
-                # Convert any dictionaries in the list to AST objects
+                if not query and where_param:
+                    raise ValueError("where requires at least one named node/edge step; empty chains have no aliases")
+
                 converted_query: List[ASTObject] = []
                 for item in query:
                     if isinstance(item, dict):
@@ -277,17 +304,49 @@ def gfql(self: Plottable,
                     else:
                         converted_query.append(item)
 
-                return chain_impl(self, converted_query, engine, policy=expanded_policy, context=context)
+                return _chain_dispatch(
+                    self,
+                    Chain(converted_query, where=where_param),
+                    engine,
+                    expanded_policy,
+                    context,
+                )
             else:
                 raise TypeError(
                     f"Query must be ASTObject, List[ASTObject], Chain, ASTLet, or dict. "
                     f"Got {type(query).__name__}"
                 )
         finally:
-            # Pop execution depth and operation path when returning
             context.pop_depth()
             context.pop_path()
     finally:
-        # Reset policy depth
         if policy:
             context.policy_depth = policy_depth
+
+
+def _chain_dispatch(
+    g: Plottable,
+    chain_obj: Chain,
+    engine: Union[EngineAbstract, str],
+    policy: Optional[PolicyDict],
+    context: ExecutionContext,
+) -> Plottable:
+    if chain_obj.where:
+        validate_chain_schema(g, chain_obj.chain, collect_all=False)
+        is_cudf = engine == EngineAbstract.CUDF or engine == "cudf"
+        engine_enum = Engine.CUDF if is_cudf else Engine.PANDAS
+        inputs = build_same_path_inputs(
+            g,
+            chain_obj.chain,
+            chain_obj.where,
+            engine=engine_enum,
+            include_paths=False,
+        )
+        return execute_same_path_chain(
+            inputs.graph,
+            inputs.chain,
+            inputs.where,
+            inputs.engine,
+            inputs.include_paths,
+        )
+    return chain_impl(g, chain_obj.chain, engine, policy=policy, context=context)
