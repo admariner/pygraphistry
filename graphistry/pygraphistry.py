@@ -3,6 +3,7 @@ from typing_extensions import Literal
 from graphistry.privacy import Mode, ModeAction
 from graphistry.utils.requests import log_requests_error
 from graphistry.plugins_types.hypergraph import HypergraphResult
+from graphistry.plugins_types.gexf_types import GexfEdgeViz, GexfNodeViz, GexfParseEngine
 from graphistry.client_session import ClientSession, ApiVersion, ENV_GRAPHISTRY_API_KEY, DatasetInfo, AuthManagerProtocol, strtobool
 from graphistry.Engine import EngineAbstractType
 
@@ -1095,6 +1096,93 @@ class GraphistryClient(AuthManagerProtocol):
             print("WARNING: Engine currently ignored, please contact if critical")
 
         return cast(Plotter, self._plotter().nodexl(xls_or_url, source, engine, verbose))
+
+    def gexf(
+        self,
+        source: Any,
+        name: Optional[str] = None,
+        description: Optional[str] = None,
+        bind_node_viz: Optional[Iterable[GexfNodeViz]] = None,
+        bind_edge_viz: Optional[Iterable[GexfEdgeViz]] = None,
+        parse_engine: GexfParseEngine = "auto",
+    ) -> Plotter:
+        """
+        Load a GEXF file/URL/stream into a Plotter.
+
+        :param source: Path, URL, bytes, or file-like object containing GEXF XML
+        :param name: Optional Graphistry dataset name override
+        :param description: Optional Graphistry dataset description override
+        :param bind_node_viz: Optional allowlist of node viz fields to bind (honor). None means bind all available node
+            viz fields. Empty list means bind none. Choices: "color", "size", "opacity", "position", "icon".
+            Fields not bound are still parsed into columns for later use (e.g., you can re-bind after loading).
+        :param bind_edge_viz: Optional allowlist of edge viz fields to bind (honor). None means bind all available edge
+            viz fields. Empty list means bind none. Choices: "color", "size", "opacity".
+        :param parse_engine: XML parser to use: "auto" (prefer defusedxml if installed), "defused", or "stdlib".
+
+        **Example: Minimal (honor all GEXF viz)**
+            ::
+
+                g = graphistry.gexf("my_graph.gexf")
+                g.plot()
+
+        **Example: Drop GEXF colors/sizes, keep layout, then encode**
+            ::
+
+                g_layout = graphistry.gexf(
+                    "my_graph.gexf",
+                    bind_node_viz=["position"],
+                    bind_edge_viz=[],
+                )
+                g = (
+                    g_layout
+                    .encode_point_color("class", as_categorical=True)
+                    .encode_point_size("occurences")
+                )
+                g.plot()
+
+        If ``defusedxml`` is installed, it is used automatically for safer XML parsing of untrusted inputs.
+        """
+        return cast(
+            Plotter,
+            self._plotter().from_gexf(
+                source,
+                name=name,
+                description=description,
+                bind_node_viz=bind_node_viz,
+                bind_edge_viz=bind_edge_viz,
+                parse_engine=parse_engine,
+            ),
+        )
+
+    def from_gexf(
+        self,
+        source: Any,
+        name: Optional[str] = None,
+        description: Optional[str] = None,
+        bind_node_viz: Optional[Iterable[GexfNodeViz]] = None,
+        bind_edge_viz: Optional[Iterable[GexfEdgeViz]] = None,
+        parse_engine: GexfParseEngine = "auto",
+    ) -> Plotter:
+        """
+        Alias for :meth:`gexf`.
+        """
+        return cast(
+            Plotter,
+            self.gexf(
+                source,
+                name=name,
+                description=description,
+                bind_node_viz=bind_node_viz,
+                bind_edge_viz=bind_edge_viz,
+                parse_engine=parse_engine,
+            ),
+        )
+
+    def to_gexf(self, path: Optional[str] = None, **kwargs: Any) -> str:
+        """
+        Export the current graph to a GEXF string (optionally writing to disk).
+        """
+        return cast(str, self._plotter().to_gexf(path, **kwargs))
 
     def gremlin(self, queries: Union[str, Iterable[str]]) -> Plotter:
         """Run one or more gremlin queries and get back the result as a graph object
@@ -2526,6 +2614,9 @@ org_name = PyGraphistry.org_name
 idp_name = PyGraphistry.idp_name
 sso_state = PyGraphistry.sso_state
 scene_settings = PyGraphistry.scene_settings
+gexf = PyGraphistry.gexf
+from_gexf = PyGraphistry.from_gexf
+to_gexf = PyGraphistry.to_gexf
 from_igraph = PyGraphistry.from_igraph
 from_cugraph = PyGraphistry.from_cugraph
 personal_key_id = PyGraphistry.personal_key_id
