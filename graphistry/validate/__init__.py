@@ -1,3 +1,33 @@
 from .validate_encodings import (  # noqa: E402, F401
     validate_encodings
 )
+from .validate_settings import (  # noqa: E402, F401
+    AxisBounds,
+    AxisRow,
+    AxisRows,
+    RingContinuousAxis,
+    RingCategoricalAxis,
+    AXIS_BOUNDS_ALLOWED_KEYS,
+    AXIS_ROW_ALLOWED_KEYS,
+    AXIS_ROW_POSITION_KEYS,
+    AXIS_ROW_BOOL_KEYS,
+    AXIS_ROW_NUMERIC_KEYS,
+    URL_PARAM_NAMES,
+    REACT_SETTING_NAMES,
+    URL_PARAM_NAME_SET,
+    REACT_SETTING_NAME_SET,
+    URLParamsDict,
+    ReactSettingsDict,
+    RADIAL_AXIS_URL_DEFAULTS,
+    LINEAR_AXIS_URL_DEFAULTS,
+    axis_url_defaults,
+    normalize_url_params,
+    normalize_react_settings,
+    is_axis_bounds_payload,
+    is_axis_row_payload,
+    is_axis_rows_payload,
+    is_ring_continuous_axis_payload,
+    is_ring_categorical_axis_payload,
+    classify_axis_kind,
+    apply_axis_url_defaults,
+)

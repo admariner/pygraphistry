@@ -8,6 +8,7 @@ from graphistry.client_session import ClientSession, ApiVersion, ENV_GRAPHISTRY_
 from graphistry.Engine import EngineAbstractType
 from graphistry.models.collections import CollectionsInput
 from graphistry.models.types import ValidationParam
+from graphistry.validate import URLParamsDict
 from graphistry.otel import inject_trace_headers, otel as otel_config
 
 """Top-level import of class PyGraphistry as "Graphistry". Used to connect to the Graphistry server and then create a base plotter."""
@@ -2374,9 +2375,16 @@ class GraphistryClient(AuthManagerProtocol):
     ):
         return self._plotter().from_cugraph(G, node_attributes, edge_attributes, load_nodes, load_edges, merge_if_existing)
 
-    def settings(self, height=None, url_params={}, render=None):
+    def settings(
+        self,
+        height=None,
+        url_params: Optional[URLParamsDict] = None,
+        render=None,
+        validate: ValidationParam = 'autofix',
+        warn: bool = True,
+    ):
 
-        return self._plotter().settings(height, url_params, render)
+        return self._plotter().settings(height, url_params, render, validate=validate, warn=warn)
 
     def collections(
         self,
@@ -2396,7 +2404,7 @@ class GraphistryClient(AuthManagerProtocol):
             warn=warn
         )
 
-    def _viz_url(self, info: DatasetInfo, url_params: Dict[str, Any]) -> str:
+    def _viz_url(self, info: DatasetInfo, url_params: URLParamsDict) -> str:
         splash_time = int(calendar.timegm(time.gmtime())) + 15
         extra = "&".join([k + "=" + str(v) for k, v in list(url_params.items())])
         cph = self.client_protocol_hostname()

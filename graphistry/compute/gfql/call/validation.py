@@ -44,6 +44,10 @@ from graphistry.compute.gfql.call.support import (
     is_unwind_expr,
     validate_hypergraph_opts,
 )
+from graphistry.validate import (
+    is_ring_categorical_axis_payload,
+    is_ring_continuous_axis_payload,
+)
 from graphistry.compute.gfql.row.order_expr import (
     is_order_aggregate_alias_ast,
     order_expr_ast_static_supported,
@@ -608,7 +612,7 @@ SAFELIST_V1: Dict[str, Dict[str, Any]] = {
             'v_start': lambda v: v is None or is_int_or_float(v),
             'v_end': lambda v: v is None or is_int_or_float(v),
             'v_step': lambda v: v is None or is_int_or_float(v),
-            'axis': lambda v: v is None or is_list_or_dict(v),
+            'axis': lambda v: v is None or is_ring_continuous_axis_payload(v),
             'normalize_ring_col': is_bool,
             'reverse': is_bool,
             'play_ms': lambda v: v is None or is_int(v),
@@ -633,7 +637,7 @@ SAFELIST_V1: Dict[str, Dict[str, Any]] = {
             'append_unhandled': is_bool,
             'min_r': lambda v: v is None or is_int_or_float(v),
             'max_r': lambda v: v is None or is_int_or_float(v),
-            'axis': lambda v: v is None or is_list_or_dict(v),
+            'axis': lambda v: v is None or is_ring_categorical_axis_payload(v),
             'reverse': is_bool,
             'play_ms': lambda v: v is None or is_int(v),
             'engine': lambda v: v is None or v in ('auto', 'pandas', 'cudf', 'dask', 'dask_cudf')
