@@ -4483,8 +4483,9 @@ def test_string_cypher_rejects_placeholder_quantifier_overlap_query_as_syntax() 
 def test_string_cypher_rejects_unsound_multi_source_aggregate_overlap_queries(query: str) -> None:
     g = _mk_graph(pd.DataFrame({"id": []}), pd.DataFrame({"s": [], "d": []}))
 
-    with pytest.raises(GFQLValidationError, match="one MATCH source alias at a time"):
+    with pytest.raises(GFQLValidationError, match="one MATCH source alias at a time") as exc_info:
         g.gfql(query)
+    assert "#1273" in exc_info.value.message
 
 
 @pytest.mark.parametrize(
@@ -4764,6 +4765,7 @@ def test_string_cypher_with_unwind_reentry_progresses_past_parser_to_row_scope_b
 
     assert exc_info.value.code == ErrorCode.E108
     assert "one MATCH source alias at a time" in exc_info.value.message
+    assert "#1273" in exc_info.value.message
 
 
 def test_string_cypher_rejects_with_unwind_reentry_when_unwind_source_is_not_collected_alias() -> None:
@@ -8988,11 +8990,9 @@ def test_string_cypher_failfast_rejects_post_with_match_collect_unwind_match_fin
         "RETURN bid, d.id AS id"
     )
 
-    with pytest.raises(
-        GFQLValidationError,
-        match="Cypher row lowering currently supports one MATCH source alias at a time",
-    ):
+    with pytest.raises(GFQLValidationError, match="one MATCH source alias at a time") as exc_info:
         _mk_multi_stage_reentry_graph().gfql(query)
+    assert "#1273" in exc_info.value.message
 
 
 def test_string_cypher_failfast_rejects_post_with_match_collect_unwind_match_final_with_order_by_limit() -> None:
@@ -9009,11 +9009,9 @@ def test_string_cypher_failfast_rejects_post_with_match_collect_unwind_match_fin
         "RETURN bid, d.id AS id"
     )
 
-    with pytest.raises(
-        GFQLValidationError,
-        match="Cypher row lowering currently supports one MATCH source alias at a time",
-    ):
+    with pytest.raises(GFQLValidationError, match="one MATCH source alias at a time") as exc_info:
         _mk_connected_multi_pattern_fanout_graph().gfql(query)
+    assert "#1273" in exc_info.value.message
 
 
 def test_string_cypher_executes_post_with_match_collect_unwind_match_empty_result() -> None:
@@ -9617,8 +9615,9 @@ def test_multi_alias_with_stage_still_rejected() -> None:
         pd.DataFrame({"id": ["a", "b"], "label__A": [True, False], "label__B": [False, True]}),
         pd.DataFrame({"s": ["a"], "d": ["b"], "type": ["R"]}),
     )
-    with pytest.raises(GFQLValidationError, match="one MATCH source alias"):
+    with pytest.raises(GFQLValidationError, match="one MATCH source alias") as exc_info:
         g.gfql("MATCH (a:A)-[:R]->(b:B) WITH a.id AS a_id, b.id AS b_id RETURN a_id, b_id")
+    assert "#1273" in exc_info.value.message
 
 
 def test_compile_cypher_tracks_seeded_top_level_row_query() -> None:
