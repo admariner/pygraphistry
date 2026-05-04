@@ -3370,7 +3370,20 @@ def _three_valued_logic_fixture_graph() -> _CypherTestGraph:
     )
 
 
-def test_string_cypher_executes_nullable_not_or_uses_three_valued_logic() -> None:
+def _rows_for_issue_1219_engine(result: Any, engine: str | None) -> List[Dict[str, Any]]:
+    frame = result._nodes.to_pandas() if engine == "cudf" else result._nodes
+    return cast(List[Dict[str, Any]], frame.to_dict(orient="records"))
+
+
+def _engine_kwargs_for_issue_1219(engine: str | None) -> Dict[str, Any]:
+    if engine == "cudf":
+        _require_cudf_runtime()
+        return {"engine": "cudf"}
+    return {}
+
+
+@pytest.mark.parametrize("engine", [None, "cudf"], ids=["pandas", "cudf"])
+def test_string_cypher_executes_nullable_not_or_uses_three_valued_logic(engine: str | None) -> None:
     # `WHERE NOT n.x = 1 OR n.y IS NULL` against a fixture mixing actual
     # and projected nulls.  Cypher 3VL truth table:
     #   n1{x=1, y=10}:   NOT(1=1)=F,    y IS NULL=F → F OR F = F → drop
@@ -3380,13 +3393,17 @@ def test_string_cypher_executes_nullable_not_or_uses_three_valued_logic() -> Non
     # Locks that the pandas-backed row-evaluator preserves NULL OR T = T.
     graph = _three_valued_logic_fixture_graph()
 
-    result = graph.gfql("MATCH (n:N) WHERE NOT n.x = 1 OR n.y IS NULL RETURN n.id AS id")
+    result = graph.gfql(
+        "MATCH (n:N) WHERE NOT n.x = 1 OR n.y IS NULL RETURN n.id AS id",
+        **_engine_kwargs_for_issue_1219(engine),
+    )
 
-    ids = sorted(row["id"] for row in result._nodes.to_dict(orient="records"))
+    ids = sorted(row["id"] for row in _rows_for_issue_1219_engine(result, engine))
     assert ids == ["n2", "n4"]
 
 
-def test_string_cypher_executes_nary_or_returns_full_union() -> None:
+@pytest.mark.parametrize("engine", [None, "cudf"], ids=["pandas", "cudf"])
+def test_string_cypher_executes_nary_or_returns_full_union(engine: str | None) -> None:
     # `WHERE n.x = 1 OR n.x = 2 OR n.x = 3` — three OR branches against a
     # 5-row fixture where each value matches a unique row.  Locks that the
     # binder's parse evaluates ALL branches; silently dropping any one
@@ -3400,13 +3417,17 @@ def test_string_cypher_executes_nary_or_returns_full_union() -> None:
         pd.DataFrame({"s": [], "d": []}),
     )
 
-    result = graph.gfql("MATCH (n:N) WHERE n.x = 1 OR n.x = 2 OR n.x = 3 RETURN n.id AS id")
+    result = graph.gfql(
+        "MATCH (n:N) WHERE n.x = 1 OR n.x = 2 OR n.x = 3 RETURN n.id AS id",
+        **_engine_kwargs_for_issue_1219(engine),
+    )
 
-    ids = sorted(row["id"] for row in result._nodes.to_dict(orient="records"))
+    ids = sorted(row["id"] for row in _rows_for_issue_1219_engine(result, engine))
     assert ids == ["n1", "n2", "n3"]
 
 
-def test_string_cypher_executes_nary_or_with_duplicate_branch_locks_specific_associativity() -> None:
+@pytest.mark.parametrize("engine", [None, "cudf"], ids=["pandas", "cudf"])
+def test_string_cypher_executes_nary_or_with_duplicate_branch_locks_specific_associativity(engine: str | None) -> None:
     # Companion to test_string_cypher_executes_nary_or_returns_full_union:
     # `WHERE n.x = 1 OR n.x = 1 OR n.x = 3` has a duplicated leftmost
     # branch.  If the binder silently dropped the rightmost branch under
@@ -3423,9 +3444,12 @@ def test_string_cypher_executes_nary_or_with_duplicate_branch_locks_specific_ass
         pd.DataFrame({"s": [], "d": []}),
     )
 
-    result = graph.gfql("MATCH (n:N) WHERE n.x = 1 OR n.x = 1 OR n.x = 3 RETURN n.id AS id")
+    result = graph.gfql(
+        "MATCH (n:N) WHERE n.x = 1 OR n.x = 1 OR n.x = 3 RETURN n.id AS id",
+        **_engine_kwargs_for_issue_1219(engine),
+    )
 
-    ids = sorted(row["id"] for row in result._nodes.to_dict(orient="records"))
+    ids = sorted(row["id"] for row in _rows_for_issue_1219_engine(result, engine))
     assert ids == ["n1", "n3"]
 
 
@@ -3442,6 +3466,7 @@ def _de_morgan_fixture_graph() -> _CypherTestGraph:
     )
 
 
+@pytest.mark.parametrize("engine", [None, "cudf"], ids=["pandas", "cudf"])
 @pytest.mark.parametrize("compound,distributed,expected", [
     # NOT(A OR B) ≡ NOT(A) AND NOT(B) — both forms must return {n4}
     (
@@ -3457,23 +3482,24 @@ def _de_morgan_fixture_graph() -> _CypherTestGraph:
     ),
 ])
 def test_string_cypher_executes_de_morgan_compositions(
-    compound: str, distributed: str, expected: List[str],
+    compound: str, distributed: str, expected: List[str], engine: str | None,
 ) -> None:
     # Each NOT-of-compound and its De-Morganed equivalent must return the
     # same row set AND that row set must equal the hardcoded expected.
     graph = _de_morgan_fixture_graph()
 
-    compound_result = graph.gfql(compound)
-    distributed_result = graph.gfql(distributed)
-    compound_ids = sorted(row["id"] for row in compound_result._nodes.to_dict(orient="records"))
-    distributed_ids = sorted(row["id"] for row in distributed_result._nodes.to_dict(orient="records"))
+    compound_result = graph.gfql(compound, **_engine_kwargs_for_issue_1219(engine))
+    distributed_result = graph.gfql(distributed, **_engine_kwargs_for_issue_1219(engine))
+    compound_ids = sorted(row["id"] for row in _rows_for_issue_1219_engine(compound_result, engine))
+    distributed_ids = sorted(row["id"] for row in _rows_for_issue_1219_engine(distributed_result, engine))
 
     assert compound_ids == expected
     assert distributed_ids == expected
     assert compound_ids == distributed_ids  # De Morgan equivalence
 
 
-def test_string_cypher_executes_xor_with_null_uses_three_valued_logic() -> None:
+@pytest.mark.parametrize("engine", [None, "cudf"], ids=["pandas", "cudf"])
+def test_string_cypher_executes_xor_with_null_uses_three_valued_logic(engine: str | None) -> None:
     # XOR + IS NULL on the 3VL fixture.  IS NULL is deterministic
     # (NaN → TRUE, non-null → FALSE; no NULL output), so XOR's NULL
     # comes only from the comparison branch.
@@ -3484,13 +3510,17 @@ def test_string_cypher_executes_xor_with_null_uses_three_valued_logic() -> None:
     #   n4{x=NaN,y=NaN}: x=1=NULL, y IS NULL=T → NULL XOR T = NULL → drop
     graph = _three_valued_logic_fixture_graph()
 
-    result = graph.gfql("MATCH (n:N) WHERE n.x = 1 XOR n.y IS NULL RETURN n.id AS id")
+    result = graph.gfql(
+        "MATCH (n:N) WHERE n.x = 1 XOR n.y IS NULL RETURN n.id AS id",
+        **_engine_kwargs_for_issue_1219(engine),
+    )
 
-    ids = sorted(row["id"] for row in result._nodes.to_dict(orient="records"))
+    ids = sorted(row["id"] for row in _rows_for_issue_1219_engine(result, engine))
     assert ids == ["n1", "n2"]
 
 
-def test_string_cypher_executes_xor_returns_symmetric_difference() -> None:
+@pytest.mark.parametrize("engine", [None, "cudf"], ids=["pandas", "cudf"])
+def test_string_cypher_executes_xor_returns_symmetric_difference(engine: str | None) -> None:
     # Sibling to the OR/AND/NOT runtime locks: XOR(A, B) ≡ (A AND NOT B) OR (NOT A AND B).
     # Locks pandas-backed evaluator returns the symmetric-difference row set
     # rather than treating XOR as OR (the boolean_expr_to_text and parse-tree
@@ -3502,26 +3532,34 @@ def test_string_cypher_executes_xor_returns_symmetric_difference() -> None:
     #   n4{x=2, y=3}: x=1=F, y=2=F → F XOR F = F → drop
     graph = _de_morgan_fixture_graph()
 
-    result = graph.gfql("MATCH (n:N) WHERE n.x = 1 XOR n.y = 2 RETURN n.id AS id")
+    result = graph.gfql(
+        "MATCH (n:N) WHERE n.x = 1 XOR n.y = 2 RETURN n.id AS id",
+        **_engine_kwargs_for_issue_1219(engine),
+    )
 
-    ids = sorted(row["id"] for row in result._nodes.to_dict(orient="records"))
+    ids = sorted(row["id"] for row in _rows_for_issue_1219_engine(result, engine))
     assert ids == ["n2", "n3"]
 
 
-def test_string_cypher_executes_double_negation_returns_original() -> None:
+@pytest.mark.parametrize("engine", [None, "cudf"], ids=["pandas", "cudf"])
+def test_string_cypher_executes_double_negation_returns_original(engine: str | None) -> None:
     # NOT(NOT A) ≡ A.  Locks compound-NOT lowering doesn't drop one negation.
     graph = _de_morgan_fixture_graph()
 
-    plain_result = graph.gfql("MATCH (n:N) WHERE n.x = 1 RETURN n.id AS id")
-    double_neg_result = graph.gfql("MATCH (n:N) WHERE NOT NOT n.x = 1 RETURN n.id AS id")
-    plain_ids = sorted(row["id"] for row in plain_result._nodes.to_dict(orient="records"))
-    double_neg_ids = sorted(row["id"] for row in double_neg_result._nodes.to_dict(orient="records"))
+    plain_result = graph.gfql("MATCH (n:N) WHERE n.x = 1 RETURN n.id AS id", **_engine_kwargs_for_issue_1219(engine))
+    double_neg_result = graph.gfql(
+        "MATCH (n:N) WHERE NOT NOT n.x = 1 RETURN n.id AS id",
+        **_engine_kwargs_for_issue_1219(engine),
+    )
+    plain_ids = sorted(row["id"] for row in _rows_for_issue_1219_engine(plain_result, engine))
+    double_neg_ids = sorted(row["id"] for row in _rows_for_issue_1219_engine(double_neg_result, engine))
 
     assert plain_ids == ["n1", "n2"]
     assert double_neg_ids == plain_ids
 
 
-def test_string_cypher_executes_mixed_string_numeric_and_inside_or() -> None:
+@pytest.mark.parametrize("engine", [None, "cudf"], ids=["pandas", "cudf"])
+def test_string_cypher_executes_mixed_string_numeric_and_inside_or(engine: str | None) -> None:
     # `WHERE (n.s > 'a' AND n.x > 0) OR n.x < -1` — exercises the
     # `_StringAllowingComparisonMixin` (#1217: extended GT/LT/GE/LE/NE
     # to strings) paired with OR composition.  The string GT branch
@@ -3544,13 +3582,15 @@ def test_string_cypher_executes_mixed_string_numeric_and_inside_or() -> None:
     )
 
     result = graph.gfql(
-        "MATCH (n:N) WHERE (n.s > 'a' AND n.x > 0) OR n.x < -1 RETURN n.id AS id"
+        "MATCH (n:N) WHERE (n.s > 'a' AND n.x > 0) OR n.x < -1 RETURN n.id AS id",
+        **_engine_kwargs_for_issue_1219(engine),
     )
 
-    ids = sorted(row["id"] for row in result._nodes.to_dict(orient="records"))
+    ids = sorted(row["id"] for row in _rows_for_issue_1219_engine(result, engine))
     assert ids == ["n1", "n2", "n4"]
 
 
+@pytest.mark.parametrize("engine", [None, "cudf"], ids=["pandas", "cudf"])
 @pytest.mark.parametrize(
     "query,expected_rows",
     [
@@ -3576,7 +3616,11 @@ def test_string_cypher_executes_mixed_string_numeric_and_inside_or() -> None:
         "audit-negated-disjunction",
     ],
 )
-def test_issue_1219_row_boolean_audit_base_match_matrix(query: str, expected_rows: List[Dict[str, Any]]) -> None:
+def test_issue_1219_row_boolean_audit_base_match_matrix(
+    query: str,
+    expected_rows: List[Dict[str, Any]],
+    engine: str | None,
+) -> None:
     graph = _mk_graph(
         pd.DataFrame(
             {
@@ -3588,8 +3632,8 @@ def test_issue_1219_row_boolean_audit_base_match_matrix(query: str, expected_row
         pd.DataFrame({"s": [], "d": []}),
     )
 
-    result = graph.gfql(query)
-    assert result._nodes.to_dict(orient="records") == expected_rows
+    result = graph.gfql(query, **_engine_kwargs_for_issue_1219(engine))
+    assert _rows_for_issue_1219_engine(result, engine) == expected_rows
 
 
 def _normalize_nullable_rows(rows: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
@@ -3607,6 +3651,7 @@ def _normalize_nullable_rows(rows: List[Dict[str, Any]]) -> List[Dict[str, Any]]
     return normalized
 
 
+@pytest.mark.parametrize("engine", [None, "cudf"], ids=["pandas", "cudf"])
 @pytest.mark.parametrize(
     "query,expected_rows",
     [
@@ -3644,6 +3689,7 @@ def _normalize_nullable_rows(rows: List[Dict[str, Any]]) -> List[Dict[str, Any]]
 def test_issue_1219_row_boolean_audit_connected_optional_structured_matrix(
     query: str,
     expected_rows: List[Dict[str, Any]],
+    engine: str | None,
 ) -> None:
     graph = _mk_graph(
         pd.DataFrame(
@@ -3661,10 +3707,14 @@ def test_issue_1219_row_boolean_audit_connected_optional_structured_matrix(
         ),
     )
 
-    rows = graph.gfql(query)._nodes.to_dict(orient="records")
+    rows = _rows_for_issue_1219_engine(
+        graph.gfql(query, **_engine_kwargs_for_issue_1219(engine)),
+        engine,
+    )
     assert _normalize_nullable_rows(rows) == expected_rows
 
 
+@pytest.mark.parametrize("engine", [None, "cudf"], ids=["pandas", "cudf"])
 @pytest.mark.parametrize(
     "query,expected_rows",
     [
@@ -3711,6 +3761,7 @@ def test_issue_1219_row_boolean_audit_connected_optional_structured_matrix(
 def test_issue_1219_row_boolean_audit_connected_optional_row_expr_matrix(
     query: str,
     expected_rows: List[Dict[str, Any]],
+    engine: str | None,
 ) -> None:
     graph = _mk_graph(
         pd.DataFrame(
@@ -3728,7 +3779,10 @@ def test_issue_1219_row_boolean_audit_connected_optional_row_expr_matrix(
         ),
     )
 
-    rows = graph.gfql(query)._nodes.to_dict(orient="records")
+    rows = _rows_for_issue_1219_engine(
+        graph.gfql(query, **_engine_kwargs_for_issue_1219(engine)),
+        engine,
+    )
     assert _normalize_nullable_rows(rows) == expected_rows
 
 
