@@ -11096,6 +11096,81 @@ def test_string_cypher_multi_alias_with_three_stage_case_aggregation() -> None:
     assert all(r["postCount"] > 0 for r in records)
 
 
+def test_issue_1038_ic4_return_side_case_expression_regression_lock() -> None:
+    """Regression lock for #1038: RETURN-side CASE over IC4-shaped post timestamp ranges."""
+    graph = _mk_graph(
+        pd.DataFrame(
+            {
+                "id": ["p1", "f1", "f2", "post1", "post2", "post3", "tag1", "tag2"],
+                "label__Person": [True, True, True, False, False, False, False, False],
+                "label__Post": [False, False, False, True, True, True, False, False],
+                "label__Tag": [False, False, False, False, False, False, True, True],
+                "name": ["", "", "", "", "", "", "TagA", "TagB"],
+                "creationDate": [
+                    0,
+                    0,
+                    0,
+                    1275350400000,
+                    1275264000000,
+                    1306799999999,
+                    0,
+                    0,
+                ],
+            }
+        ),
+        pd.DataFrame(
+            {
+                "s": ["p1", "p1", "post1", "post2", "post3", "post1", "post2", "post3"],
+                "d": ["f1", "f2", "f1", "f1", "f2", "tag1", "tag1", "tag2"],
+                "type": [
+                    "KNOWS",
+                    "KNOWS",
+                    "HAS_CREATOR",
+                    "HAS_CREATOR",
+                    "HAS_CREATOR",
+                    "HAS_TAG",
+                    "HAS_TAG",
+                    "HAS_TAG",
+                ],
+            }
+        ),
+    )
+
+    result = graph.gfql(
+        "MATCH (person:Person {id: $pid})-[:KNOWS]-(friend:Person), "
+        "(friend)<-[:HAS_CREATOR]-(post:Post)-[:HAS_TAG]->(tag:Tag) "
+        "WITH DISTINCT tag, post "
+        "RETURN tag.name AS tagName, post.id AS rawPostId, "
+        "CASE WHEN 1275350400000 <= post.creationDate AND post.creationDate < 1306886400000 "
+        "THEN post.id ELSE null END AS postId "
+        "ORDER BY tagName ASC, rawPostId ASC",
+        params={"pid": "p1"},
+    )
+
+    rows = result._nodes.to_dict(orient="records")
+    assert len(rows) == 3
+    assert rows[0] == {"tagName": "TagA", "rawPostId": "post1", "postId": "post1"}
+    assert rows[1]["tagName"] == "TagA"
+    assert rows[1]["rawPostId"] == "post2"
+    assert pd.isna(rows[1]["postId"])
+    assert rows[2] == {"tagName": "TagB", "rawPostId": "post3", "postId": "post3"}
+
+
+def test_issue_1038_rejects_aggregate_inside_row_case_expression() -> None:
+    graph = _mk_ic4_shape_graph()
+
+    with pytest.raises(GFQLValidationError) as exc_info:
+        graph.gfql(
+            "MATCH (person:Person {id: $pid})-[:KNOWS]-(friend:Person), "
+            "(friend)<-[:HAS_CREATOR]-(post:Post)-[:HAS_TAG]->(tag:Tag) "
+            "WITH DISTINCT tag, post "
+            "RETURN CASE WHEN post.creationDate > 150 THEN count(*) ELSE 0 END AS out",
+            params={"pid": "p1"},
+        )
+
+    assert exc_info.value.code == ErrorCode.E108
+
+
 # ---------------------------------------------------------------------------
 # Issue #996: MATCH (connected) OPTIONAL MATCH ... RETURN mixed + CASE
 # ---------------------------------------------------------------------------
