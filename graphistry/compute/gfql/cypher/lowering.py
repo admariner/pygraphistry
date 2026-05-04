@@ -1922,7 +1922,8 @@ def _validate_row_expr_scope(
             )
         if active_match_alias is not None and root != active_match_alias and root not in allowed_roots:
             raise _unsupported(
-                "Cypher row lowering currently supports one MATCH source alias at a time",
+                "Cypher row lowering currently supports one MATCH source alias at a time; "
+                "for remaining multi-source residuals see issue #1273",
                 field=field,
                 value=expr_text,
                 line=line,
@@ -2352,7 +2353,8 @@ def _active_match_alias_for_stage(
         if allowed_match_aliases is not None and referenced <= allowed_match_aliases:
             return _first_allowed_alias(alias_targets, allowed_match_aliases, referenced)
         raise _unsupported(
-            "Cypher row lowering currently supports one MATCH source alias at a time",
+            "Cypher row lowering currently supports one MATCH source alias at a time; "
+            "for remaining multi-source residuals see issue #1273",
             field="return",
             value=sorted(referenced),
             line=clause.span.line,
@@ -2364,7 +2366,8 @@ def _active_match_alias_for_stage(
         if allowed_match_aliases is not None and aggregate_only_referenced <= allowed_match_aliases:
             return _first_allowed_alias(alias_targets, allowed_match_aliases, aggregate_only_referenced)
         raise _unsupported(
-            "Cypher row lowering currently supports one MATCH source alias at a time",
+            "Cypher row lowering currently supports one MATCH source alias at a time; "
+            "for remaining multi-source residuals see issue #1273",
             field="return",
             value=sorted(aggregate_only_referenced),
             line=clause.span.line,
