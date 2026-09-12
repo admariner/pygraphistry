@@ -110,7 +110,7 @@ def test_point_route_serves_without_chain_and_preserves_results(engine, shape, p
 
 @pytest.mark.parametrize("shape", ["single", "tail", "seed", "edges"])
 @pytest.mark.parametrize("alias", ["value", "kind", "content"])
-def test_alias_property_collisions(engine, shape, alias, request):
+def test_alias_property_collisions(engine, shape, alias):
     g = graph(engine)
     ops = point_ops(shape, False, alias)
     with routes_off(ROUTES):
@@ -119,7 +119,6 @@ def test_alias_property_collisions(engine, shape, alias, request):
     assert actual is not None
     if engine == "cudf" and shape == "seed" and alias == "value":
         assert topd(actual._nodes)["__gfql_shadow_restore__value__"].tolist() == [0]
-        request.applymarker(pytest.mark.xfail(strict=True, reason="general cuDF alias restoration uses reordered row indexes; local repro in plan"))
     assert_result(actual, expected)
 
 
