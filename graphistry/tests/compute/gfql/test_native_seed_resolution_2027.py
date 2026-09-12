@@ -239,10 +239,7 @@ def test_non_scalar_seed_predicates_keep_parity_without_the_index(engine, seed):
 @pytest.mark.route_engaged("native-fast")
 @pytest.mark.parametrize("engine", ENGINES)
 def test_duplicate_node_rows_are_answered_once_each_on_the_native_lookup(engine):
-    """A node table that repeats a key row (a contract violation the engine tolerates): the
-    native lookup answers one row per matching node-table row, which is what the polars
-    lanes answer; the pandas/cuDF full path self-joins the duplicates into 2**3 rows (a
-    pre-existing blow-up, recorded here so a change to either side flips this pin)."""
+    """Native and generic lookup preserve each matching source row exactly once."""
     g = _lane_graph(engine)
     nodes = g._nodes
     dup = nodes.iloc[[7]]
@@ -258,4 +255,5 @@ def test_duplicate_node_rows_are_answered_once_each_on_the_native_lookup(engine)
     assert hits == 1
     fast_keys = _canon(fast._nodes)["key"].tolist()
     assert fast_keys == [7.0, 7.0], fast_keys
-    assert len(full._nodes) == 8  # the full path's duplicate self-join; not the native lane's answer
+    assert _canon(full._nodes)["key"].tolist() == [7.0, 7.0]
+    pd.testing.assert_frame_equal(_canon(fast._nodes), _canon(full._nodes))

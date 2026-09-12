@@ -134,6 +134,8 @@ POLARS_TEST_FILES=(
     graphistry/tests/compute/test_gfql_op_list_hides_internal_columns.py
     graphistry/tests/compute/gfql/routes/test_route_harness.py
     graphistry/tests/compute/gfql/routes/test_point_boundaries.py
+    graphistry/tests/compute/gfql/routes/test_has_collision_contract.py
+    graphistry/tests/compute/gfql/routes/test_node_selection_rows.py
     graphistry/tests/compute/gfql/test_join_backend_contracts.py
     graphistry/tests/compute/test_chain_validation_execution.py
     graphistry/tests/compute/gfql/test_engine_polars_semi_key_dedup.py

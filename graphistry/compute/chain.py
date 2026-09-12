@@ -1259,7 +1259,11 @@ def _chain_impl(
             if synthesized_empty_edges:
                 g_out = self.nodes(g_out._nodes, g._node)
             elif added_edge_index:
-                g_out = g_out.edges(g_out._edges.drop(columns=[g._edge]), edge=original_edge)
+                g_out = self.nodes(g_out._nodes, g._node).edges(
+                    g_out._edges.drop(columns=[g._edge]), edge=original_edge)
+            elif g._edge is not None:
+                edge_cols = [g._edge, *[c for c in g_out._edges.columns if c != g._edge]]
+                g_out = g_out.edges(g_out._edges[edge_cols])
             success = True
         else:
             # Phase 2: Backward pass to propagate downstream constraints.
