@@ -1,7 +1,7 @@
 """Join-related engine-polymorphic DataFrame operations."""
 
 import operator
-from typing import Any, Dict, List, Optional, Sequence, Tuple, cast
+from typing import Any, Dict, List, Optional, Sequence, Tuple, Union, cast
 
 from graphistry.Engine import Engine, POLARS_ENGINES, is_polars_df
 from graphistry.compute.gfql.cypher.reentry.naming import REENTRY_HIDDEN_COLUMN_PREFIX
@@ -414,15 +414,18 @@ def semijoin_by_column(
     if engine in POLARS_ENGINES:
         import polars as pl
 
+        result: Union[pl.DataFrame, pl.LazyFrame]
         if isinstance(frame, pl.DataFrame):
             assert isinstance(keys, pl.DataFrame)
-            return cast(DataFrameT, frame.join(
+            result = frame.join(
                 keys.select(right_on).unique(),
                 left_on=left_on, right_on=right_on, how="semi",
-            ))
-        assert isinstance(frame, pl.LazyFrame) and isinstance(keys, pl.LazyFrame)
-        return cast(DataFrameT, frame.join(
-            keys.select(right_on).unique(),
-            left_on=left_on, right_on=right_on, how="semi",
-        ))
+            )
+        else:
+            assert isinstance(frame, pl.LazyFrame) and isinstance(keys, pl.LazyFrame)
+            result = frame.join(
+                keys.select(right_on).unique(),
+                left_on=left_on, right_on=right_on, how="semi",
+            )
+        return cast(DataFrameT, result)
     return cast(DataFrameT, frame[frame[left_on].isin(keys[right_on])])

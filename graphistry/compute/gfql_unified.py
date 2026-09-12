@@ -2853,8 +2853,6 @@ def _chain_dispatch(
             inputs.engine,
             inputs.include_paths,
         )
-    # Only the list-input branch sets this after constructing and validating a
-    # fresh Chain. This avoids another constructor; execution still validates
-    # current operations and schema, and no validation state persists on the AST.
+    # Validation state applies only to the fresh list-input Chain; execution revalidates mutable operations.
     chain_input = chain_obj if _ast_validated else chain_obj.chain
     return chain_impl(g, chain_input, engine, policy=policy, context=context, start_nodes=start_nodes)
