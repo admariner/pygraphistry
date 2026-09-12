@@ -13,6 +13,7 @@ from graphistry.compute.chain_fast_paths import (
     _seeded_scalar_filters, _tag_fast_path_alias_frames, _verify_scalar_filters_on_hit,
 )
 from graphistry.compute.typing import DataFrameT, SeriesT
+from graphistry.compute.util import generate_safe_column_name_from
 from graphistry.compute.gfql.identifiers import is_bare_identifier
 from graphistry.compute.gfql.expr_parser import (
     FunctionCall, GFQLExprParseError, Identifier, PropertyAccessExpr, parse_expr,
@@ -41,7 +42,7 @@ def _point_hop_rows(
     if indexed_seed is None:
         return None
     seed, _ = indexed_seed
-    matched_edges = _index_edge_rows(adj, seed[node], xp, engine, edges)
+    matched_edges = _index_edge_rows(adj, seed[node], xp, engine, edges, preserve_input_order=True)
     if matched_edges is None:
         return None
     if edge_filter:
@@ -142,6 +143,13 @@ def _project_joined_point_columns(
         return None
     from_col, to_col = ((g._source, g._destination) if edge.direction == "forward"
                         else (g._destination, g._source))
+    if len(seed) > 1 and len(edges) > 1:
+        seed_order = generate_safe_column_name_from("__gfql_seed_order__", list(seed.columns) + list(edges.columns))
+        edge_order = generate_safe_column_name_from("__gfql_edge_order__", list(edges.columns) + [seed_order])
+        ranks = seed[[g._node]].assign(**{seed_order: range(len(seed))}).set_index(g._node)[seed_order]
+        positions = ranks.reindex(edges[from_col]).reset_index(drop=True)
+        ordered = edges.reset_index(drop=True).assign(**{seed_order: positions, edge_order: range(len(edges))})
+        edges = ordered.sort_values([seed_order, edge_order]).drop(columns=[seed_order, edge_order])
     frames = {n0._name: (seed, from_col), n2._name: (tail, to_col)}
     aligned: Dict[str, DataFrameT] = {}
     pandas_positions: Dict[str, List[int]] = {}

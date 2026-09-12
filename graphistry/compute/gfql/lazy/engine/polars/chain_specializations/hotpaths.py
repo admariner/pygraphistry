@@ -32,17 +32,17 @@ def _single_node_polars(g: Plottable, ops: Sequence[ASTObject], start_nodes: Opt
     import polars as pl
     from graphistry.Engine import Engine, EngineAbstract, df_to_engine
     from graphistry.compute.chain_specializations.hotpaths import _single_node_rows_via_index_or_filter
-    from graphistry.compute.gfql.lazy.engine.polars.chain import _align_seed_dtype, _bound_edge_endpoints, _semi
+    from graphistry.compute.gfql.lazy.engine.polars.chain import _align_seed_dtype, _bound_edge_endpoints, _exec
     op0 = ops[0]
     assert isinstance(op0, ASTNode)
     g0 = ensure_nodes_polars(g)
     nc = g0._node
     assert nc is not None
     edge_src, edge_dst = _bound_edge_endpoints(g)
-    nodes = _single_node_rows_via_index_or_filter(g0, op0, EngineAbstract.POLARS)
     if start_nodes is not None:
         seed = _align_seed_dtype(df_to_engine(start_nodes, Engine.POLARS), nc, g0._nodes)
-        nodes = _semi(nodes, seed, nc, nc)
+        return _exec(op0, g0, seed, None)
+    nodes = _single_node_rows_via_index_or_filter(g0, op0, EngineAbstract.POLARS)
     if op0._name is not None:
         nodes = nodes.with_columns(pl.lit(True).alias(op0._name))
     return g0.nodes(nodes, nc).edges(g0._edges.clear(), edge_src, edge_dst)
@@ -167,6 +167,14 @@ def _seeded_typed_return_dst_polars(
         dst_ids = edges.get_column(to_col).drop_nulls().unique()
         dstn = nodes_df.filter(pl.col(node).is_in(dst_ids.implode()))
     assert edges is not None and dstn is not None  # both branches above assign
+    if direction == "forward":
+        from graphistry.compute.gfql.row.pipeline import RowPipelineMixin
+        label_col = RowPipelineMixin._gfql_has_edge_destination_label_col(e1, dstn.columns)
+        if label_col is not None and not RowPipelineMixin._gfql_node_filter_has_label(n2.filter_dict):
+            dstn = dstn.filter(
+                ~pl.col(node).is_duplicated().any()
+                | pl.col(label_col).fill_null(False).cast(pl.Boolean)
+            )
     dstn = filter_by_dict_polars(dstn, n2.filter_dict)
     # A sole destination was selected from the sole surviving edge.
     if not (edges.height == 1 and dstn.height == 1):

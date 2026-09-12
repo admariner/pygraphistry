@@ -1244,6 +1244,23 @@ def _chain_impl(
                 from .gfql.exec_context import clear_row_exec_context
                 g_out = clear_row_exec_context(g_out)
             success = True
+        elif len(ops) == 1 and isinstance(ops[0], ASTNode):
+            # A node selection preserves each source row. Rejoining node IDs in
+            # the traversal combine would multiply duplicate rows and properties.
+            g_out = g_stack[0]
+            alias = ops[0]._name
+            if alias is not None:
+                cols = [c for c in g_out._nodes.columns if c != alias]
+                if g._node in cols:
+                    cols = [g._node, *[c for c in cols if c != g._node]]
+                cols = ([*cols, alias] if alias in g._nodes.columns
+                        else [*cols[:1], alias, *cols[1:]])
+                g_out = g_out.nodes(g_out._nodes[cols].reset_index(drop=True))
+            if synthesized_empty_edges:
+                g_out = self.nodes(g_out._nodes, g._node)
+            elif added_edge_index:
+                g_out = g_out.edges(g_out._edges.drop(columns=[g._edge]), edge=original_edge)
+            success = True
         else:
             # Phase 2: Backward pass to propagate downstream constraints.
             g_stack_reverse : List[Plottable] = []

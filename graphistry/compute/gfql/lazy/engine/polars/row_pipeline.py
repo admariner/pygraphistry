@@ -1042,7 +1042,10 @@ def _finish_binding_rows_polars(
         )
 
     try:
-        joined_state = state.lazy()
+        alias_columns = {alias: names(frame) for alias, frame in alias_frames.items()}
+        property_names = [f"{alias}.{col}" for alias, columns in alias_columns.items() for col in columns]
+        binding_order = generate_safe_column_name_from("__gfql_binding_order__", names(state) + property_names)
+        joined_state = state.lazy().with_row_index(binding_order)
         attach_set = (
             None if attach_prop_aliases is None else set(attach_prop_aliases)
         )
@@ -1062,7 +1065,7 @@ def _finish_binding_rows_polars(
                 ]
                 + [
                     pl.col(col).alias(f"{alias}.{col}")
-                    for col in names(lookup_src)
+                    for col in alias_columns[alias]
                     if col != node_id
                 ]
             )
@@ -1071,7 +1074,7 @@ def _finish_binding_rows_polars(
             joined_state = joined_state.join(
                 lookup, left_on=alias, right_on=node_id, how="left",
             )
-        out_df = _lazy_collect(joined_state.drop(WALK_CURRENT_COL))
+        out_df = _lazy_collect(joined_state.sort(binding_order).drop([WALK_CURRENT_COL, binding_order]))
     except pl.exceptions.SchemaError:
         if not decline_on_schema_error:
             raise
@@ -2012,7 +2015,28 @@ def binding_rows_polars(
             next_op = ops[edge_idx + 1]
             if not isinstance(next_op, ASTNode):
                 return None
-            next_nodes = filter_by_dict_polars(nodes_lf, next_op.filter_dict)
+            candidate_nodes = nodes_lf
+            dis_label_col = RowPipelineMixin._gfql_has_edge_destination_label_col(edge_op, nodes.columns)
+            if (
+                dis_label_col is not None
+                and not sem.is_multihop
+                and edge_op.direction == "forward"
+                and not RowPipelineMixin._gfql_node_filter_has_label(next_op.filter_dict)
+            ):
+                # Only collisions among reached nodes trigger HAS_<Label> narrowing.
+                # Probe before destination predicates, matching the eager binding walk.
+                reached = state.select(WALK_CURRENT_COL).join(
+                    oriented.select([WALK_FROM_COL, WALK_TO_COL]),
+                    left_on=WALK_CURRENT_COL, right_on=WALK_FROM_COL, how="inner",
+                ).select(WALK_TO_COL)
+                candidate_nodes = nodes_lf.join(
+                    reached, left_on=node_id, right_on=WALK_TO_COL, how="semi",
+                )
+                candidate_nodes = candidate_nodes.filter(
+                    ~pl.col(node_id).is_duplicated().any()
+                    | pl.col(dis_label_col).fill_null(False).cast(pl.Boolean)
+                )
+            next_nodes = filter_by_dict_polars(candidate_nodes, next_op.filter_dict)
             # pandas' endpoint prefilter twin: before the id set, so membership + alias frame agree
             next_nodes = _apply_alias_prefilters_polars(next_nodes, next_op._name, alias_prefilters)
             next_node_ids = next_nodes.select(node_id).unique()
@@ -2095,10 +2119,12 @@ def binding_rows_polars(
                     )
                     trail_cols_pl = trail_cols_pl + _seg_trail_cols
             else:
+                path_order = generate_safe_column_name_from("__gfql_path_order__", _names(state) + _names(oriented))
                 state = (
-                    state.join(oriented, left_on=WALK_CURRENT_COL, right_on=WALK_FROM_COL, how="inner")
-.drop(WALK_CURRENT_COL)
-.rename({WALK_TO_COL: WALK_CURRENT_COL})
+                    state.with_row_index(path_order)
+                    .join(oriented, left_on=WALK_CURRENT_COL, right_on=WALK_FROM_COL, how="inner")
+                    .drop(WALK_CURRENT_COL)
+                    .rename({WALK_TO_COL: WALK_CURRENT_COL})
                 )
                 for _used in trail_cols_pl:
                     state = state.filter(
@@ -2114,33 +2140,8 @@ def binding_rows_polars(
                 right_on=node_id,
                 how="semi",
             )
-            # HAS_<Label> destination disambiguation (pandas'
-            # _gfql_disambiguate_has_edge_destination_nodes): on DUPLICATE-id graphs
-            # pandas narrows the unlabeled next op to the edge's HAS_<Label> rows
-            # taken from the ORIGINAL node table, which still carries the colliding
-            # label rows. Reproducing that narrowing natively would be silently
-            # row-order-dependent, so: unique-id graphs need no narrowing (pandas'
-            # duplicated() probe is False) → native is parity-exact; duplicate-id
-            # graphs DECLINE (honest NIE). ``nodes`` above IS the pre-chain node
-            # table; when there is no pre-chain graph to probe we cannot prove
-            # uniqueness of what pandas would have seen, so decline.
-            dis_label_col = RowPipelineMixin._gfql_has_edge_destination_label_col(edge_op, nodes.columns)
-            if (
-                dis_label_col is not None
-                and not sem.is_multihop
-                and edge_op.direction == "forward"
-                and not RowPipelineMixin._gfql_node_filter_has_label(next_op.filter_dict)
-            ):
-                if g._gfql_rows_base_graph is None:
-                    return None
-                _base_dup = bool(
-                    nodes.lazy()
-.select(pl.col(node_id).is_duplicated().any())
-.collect()
-.item()
-                )
-                if _base_dup:
-                    return None
+            if not sem.is_multihop:
+                state = state.sort([path_order, _new_trail]).drop(path_order)
             next_alias = next_op._name
             if isinstance(next_alias, str):
                 state = state.with_columns(pl.col(WALK_CURRENT_COL).alias(next_alias))

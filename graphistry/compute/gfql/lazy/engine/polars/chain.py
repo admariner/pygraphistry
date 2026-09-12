@@ -1000,6 +1000,10 @@ def _chain_traversal_polars(self: Plottable, ops, start_nodes: Optional[Any] = N
     g = ensure_nodes_polars(self)
     assert g._node is not None and g._source is not None and g._destination is not None
     start_nodes = _align_seed_dtype(start_nodes, g._node, g._nodes)
+    if len(ops) == 1 and isinstance(ops[0], ASTNode):
+        # A node selection retains source rows, including duplicate and null IDs.
+        # Traversal's endpoint combine applies set semantics only when edges exist.
+        return _exec(ops[0], g, start_nodes, None)
     g, _endpoint_restore = _align_edge_endpoints(g, g._node, g._source, g._destination)
     if g._edge is None:
         EID = "__gfql_edge_index__"
