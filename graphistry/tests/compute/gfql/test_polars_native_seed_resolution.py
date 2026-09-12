@@ -33,11 +33,13 @@ def _graph(reverse=False, indexed=True, padding=0):
     return g.gfql_index_all(engine="polars").gfql_index_node_props(["id"], engine="polars") if indexed else g
 
 
-@pytest.mark.route_engaged("polars-seeded")
+@pytest.mark.parametrize("check_engagement", [
+    False, pytest.param(True, marks=pytest.mark.route_engaged("polars-seeded")),
+])
 @pytest.mark.parametrize("reverse", [False, True])
 @pytest.mark.parametrize("indexed", [False, True])
 @pytest.mark.parametrize("seed", [{"id": 104}, {"kind": "Message"}, {"id": 105}, {"id": 999}])
-def test_native_named_typed_hop_preserves_full_path_tables(reverse, indexed, seed, monkeypatch):
+def test_native_named_typed_hop_preserves_full_path_tables(reverse, indexed, seed, check_engagement, monkeypatch):
     g = _graph(reverse, indexed)
     edge = e_reverse if reverse else e_forward
     ops = [n(seed, name="m"), edge({"type": "T"}, name="e"), n({"kind": "Person"}, name="p")]
@@ -51,7 +53,8 @@ def test_native_named_typed_hop_preserves_full_path_tables(reverse, indexed, see
 
     monkeypatch.setattr(chain_polars, "_try_seeded_chain_polars", spy)
     fast = g.gfql(ops, engine="polars", index_policy="use")
-    assert served == [indexed]
+    if check_engagement:
+        assert served == [indexed]
     monkeypatch.setattr(chain_polars, "_try_seeded_chain_polars", lambda *args: None)
     full = g.gfql(ops, engine="polars", index_policy="use")
     assert_frame_equal(fast._nodes, full._nodes)
@@ -100,10 +103,15 @@ def test_native_seeded_hop_declines_without_a_usable_index(policy, monkeypatch):
     assert_frame_equal(fast._edges, full._edges)
 
 
-@pytest.mark.route_engaged("polars-seeded")
-@pytest.mark.parametrize("single_node", [False, True])
+@pytest.mark.parametrize("single_node,check_engagement", [
+    pytest.param(single_node, engagement,
+                 marks=pytest.mark.route_engaged(
+                     "polars-single-node" if single_node else "polars-seeded") if engagement else (),
+                 id=f"{'single' if single_node else 'hop'}-{'engagement' if engagement else 'result'}")
+    for single_node in (False, True) for engagement in (False, True)
+])
 @pytest.mark.parametrize("build_engine", ["polars", "polars-gpu"])
-def test_native_property_seed_uses_resident_index(single_node, build_engine, monkeypatch):
+def test_native_property_seed_uses_resident_index(single_node, check_engagement, build_engine, monkeypatch):
     import graphistry.compute.gfql.index.bindings as bindings
     g = _graph(indexed=False, padding=100).gfql_index_all(engine=build_engine).gfql_index_node_props(["id"], engine=build_engine)
     real = bindings._seed_rows_via_property_index
@@ -119,8 +127,10 @@ def test_native_property_seed_uses_resident_index(single_node, build_engine, mon
     if not single_node:
         ops += [e_forward({"type": "T"}), n({"kind": "Person"}, name="p")]
     out = g.gfql(ops, engine="polars", index_policy="use")
-    assert any(hits)
-    assert out._nodes.height == (1 if single_node else 3)
+    if check_engagement:
+        assert any(hits)
+    assert sorted(out._nodes["key"].to_list()) == ([4] if single_node else [1, 2, 4])
+    assert out._edges["value"].to_list() == ([] if single_node else [1, 2])
 
 
 def test_stale_property_index_does_not_select_old_seed(monkeypatch):
