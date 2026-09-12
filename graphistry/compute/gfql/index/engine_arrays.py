@@ -45,11 +45,21 @@ def col_to_array(df: DataFrameT, col: str, engine: Engine) -> ArrayLike:
     if engine == Engine.CUDF:
         # cudf Series -> cupy array (stays on device)
         return cast(ArrayLike, df[col].values)
-    return cast(ArrayLike, df[col].to_numpy())
+    series = df[col]
+    dtype = series.dtype
+    if dtype.kind in ("i", "u"):
+        values = series.to_numpy(dtype=f"{dtype.kind}{dtype.itemsize}")
+    else:
+        values = series.to_numpy()
+    return cast(ArrayLike, values)
 
 
 def ids_to_array(ids: DataFrameT, col: str, engine: Engine) -> ArrayLike:
     """Frontier ids (a frame/Series) -> backend array, matching index backend."""
+    if engine in (Engine.POLARS, Engine.POLARS_GPU):
+        ids = ids.drop_nulls(subset=[col])
+    else:
+        ids = ids.dropna(subset=[col])
     return col_to_array(ids, col, engine)
 
 

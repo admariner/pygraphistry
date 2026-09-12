@@ -105,6 +105,8 @@ def _integer_index(index: Union[AdjacencyIndex, NodeIdIndex, NodePropIndex]) -> 
     keys are declined rather than risking a lossy compare.
     """
     key_ok = index.keys_sorted.dtype.kind in ("i", "u")
+    if isinstance(index, NodeIdIndex) and index.source_ref is not None:
+        key_ok = key_ok and index.n_nodes == len(index.source_ref)
     if not isinstance(index, AdjacencyIndex):
         return key_ok
     return key_ok and index.other_values.dtype.kind in ("i", "u")

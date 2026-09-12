@@ -6,6 +6,8 @@ lanes in ``gfql_fast_paths.py``. This module imports only leaf modules (no back-
 
 from typing import Any, Dict, Literal, Optional, Sequence, Tuple, TYPE_CHECKING, Union, cast
 
+import pandas as pd
+
 from graphistry.Plottable import Plottable
 from graphistry.Engine import is_polars_series
 from .ast import Direction
@@ -195,6 +197,10 @@ def _ids_to_key_array(
         elif is_polars_series(vals):
             # Nullable integers become floats in NumPy unless nulls are removed first.
             raw = (vals.drop_nulls() if vals.null_count() else vals).to_numpy()
+        elif isinstance(vals, pd.Series):
+            vals = vals.dropna()
+            dtype = vals.dtype
+            raw = vals.to_numpy(dtype=f"{dtype.kind}{dtype.itemsize}") if dtype.kind in "iu" else vals.to_numpy()
         elif hasattr(vals, "to_numpy"):
             raw = vals.to_numpy()
         else:
