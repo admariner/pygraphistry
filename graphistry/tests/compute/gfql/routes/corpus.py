@@ -1,4 +1,8 @@
-"""Shared shape corpus for the chain routes.
+"""Supplemental shape corpus for the chain route engagement matrix.
+
+This matrix measures admission and engagement; it does not replace existing correctness
+tests. ``bin/test-routes-off.sh`` broadcasts the existing suites through every route
+switch and all routes disabled, retaining their independently written assertions.
 
 Every entry is a native op-list shape variant; a route test filters the corpus with the
 route's own admission predicate (the function its dispatcher calls), so one corpus is reused

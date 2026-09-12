@@ -3,7 +3,7 @@
 import operator
 from typing import Any, Dict, List, Optional, Sequence, Tuple, cast
 
-from graphistry.Engine import Engine, POLARS_ENGINES
+from graphistry.Engine import Engine, POLARS_ENGINES, is_polars_df
 from graphistry.compute.gfql.cypher.reentry.naming import REENTRY_HIDDEN_COLUMN_PREFIX
 from graphistry.compute.gfql.identifiers import HIDDEN_ALIAS_COLUMN_PREFIX
 from graphistry.compute.typing import DataFrameT, DomainT
@@ -320,8 +320,9 @@ def estimate_inner_join_rows(
 
         from graphistry.compute.gfql.lazy import collect
 
-        left_counts = left.lazy().group_by(left_on).len().rename({"len": left_n})  # type: ignore[operator]
-        right_counts = right.lazy().group_by(right_on).len().rename({"len": right_n})  # type: ignore[operator]
+        assert is_polars_df(left) and is_polars_df(right)
+        left_counts = left.lazy().group_by(left_on).len().rename({"len": left_n})
+        right_counts = right.lazy().group_by(right_on).len().rename({"len": right_n})
         value = collect(
             left_counts.join(right_counts, left_on=left_on, right_on=right_on, how="inner")
             .select((pl.col(left_n) * pl.col(right_n)).sum())
@@ -366,8 +367,9 @@ def path_ordered_expand_join(
 
         from graphistry.compute.gfql.lazy import collect
 
+        assert is_polars_df(state) and is_polars_df(step)
         joined = (
-            state.lazy().with_row_index(path_order_col)  # type: ignore[operator]
+            state.lazy().with_row_index(path_order_col)
             .join(step.lazy(), left_on=current_col, right_on=from_col, how="inner")
             .sort([path_order_col, *tiebreak_cols])
             .drop(current_col)
@@ -410,13 +412,17 @@ def semijoin_by_column(
 ) -> DataFrameT:
     """Rows of ``frame`` whose ``left_on`` value appears in ``keys[right_on]``."""
     if engine in POLARS_ENGINES:
-        return cast(
-            DataFrameT,
-            frame.join(  # type: ignore[call-arg]
-                keys.select(right_on).unique(),  # type: ignore[operator]
-                left_on=left_on,
-                right_on=right_on,
-                how="semi",  # type: ignore[arg-type]
-            ),
-        )
+        import polars as pl
+
+        if isinstance(frame, pl.DataFrame):
+            assert isinstance(keys, pl.DataFrame)
+            return cast(DataFrameT, frame.join(
+                keys.select(right_on).unique(),
+                left_on=left_on, right_on=right_on, how="semi",
+            ))
+        assert isinstance(frame, pl.LazyFrame) and isinstance(keys, pl.LazyFrame)
+        return cast(DataFrameT, frame.join(
+            keys.select(right_on).unique(),
+            left_on=left_on, right_on=right_on, how="semi",
+        ))
     return cast(DataFrameT, frame[frame[left_on].isin(keys[right_on])])

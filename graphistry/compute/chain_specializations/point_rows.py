@@ -1,8 +1,8 @@
 """Resident-index point queries that produce a row table."""
-import re
 from typing import Dict, List, Optional, Sequence, Tuple
 
 import pandas as pd
+from pandas.api.extensions import ExtensionArray
 
 from graphistry.Engine import Engine
 from graphistry.Plottable import Plottable
@@ -13,13 +13,12 @@ from graphistry.compute.chain_fast_paths import (
     _seeded_scalar_filters, _tag_fast_path_alias_frames, _verify_scalar_filters_on_hit,
 )
 from graphistry.compute.typing import DataFrameT, SeriesT
+from graphistry.compute.gfql.identifiers import is_bare_identifier
+from graphistry.compute.gfql.expr_parser import (
+    FunctionCall, GFQLExprParseError, Identifier, PropertyAccessExpr, parse_expr,
+)
 from .admission import point_rows_admits
 
-_IDENTIFIER = re.compile(r"[A-Za-z_][A-Za-z_0-9]*\Z")
-_COALESCE_PROPERTIES = re.compile(
-    r"(?i:coalesce)\s*\(\s*([A-Za-z_][A-Za-z_0-9]*\.[A-Za-z_][A-Za-z_0-9]*)"
-    r"\s*,\s*([A-Za-z_][A-Za-z_0-9]*\.[A-Za-z_][A-Za-z_0-9]*)\s*\)"
-)
 
 
 def _point_hop_rows(
@@ -69,8 +68,8 @@ def _point_column(
 ) -> Optional[str]:
     if expr in frame.columns:
         return None if expr in aliases else expr
-    if (expr.startswith(source + ".") and _IDENTIFIER.fullmatch(source)
-            and _IDENTIFIER.fullmatch(expr[len(source) + 1:])
+    if (expr.startswith(source + ".") and is_bare_identifier(source)
+            and is_bare_identifier(expr[len(source) + 1:])
             and expr[len(source) + 1:] in frame.columns):
         column = expr[len(source) + 1:]
         if column in aliases and (column != source or str(frame[column].dtype).startswith("bool")):
@@ -99,10 +98,25 @@ def _project_point_columns(
         if column is not None:
             projected[alias] = frame[column]
             continue
-        coalesce = _COALESCE_PROPERTIES.fullmatch(expr)
-        if coalesce is None:
+        # Reuse the evaluator's cached grammar; this route supports two bare properties.
+        if not expr.lower().startswith("coalesce") or "`" in expr:
             return None
-        left_col, right_col = (_point_column(frame, term, source, aliases) for term in coalesce.groups())
+        try:
+            coalesce = parse_expr(expr)
+        except GFQLExprParseError:
+            return None
+        if (not isinstance(coalesce, FunctionCall) or coalesce.name.lower() != "coalesce"
+                or coalesce.distinct or len(coalesce.args) != 2):
+            return None
+        terms: List[str] = []
+        for argument in coalesce.args:
+            if (not isinstance(argument, PropertyAccessExpr)
+                    or not isinstance(argument.value, Identifier)
+                    or not is_bare_identifier(argument.value.name)
+                    or not is_bare_identifier(argument.property)):
+                return None
+            terms.append(f"{argument.value.name}.{argument.property}")
+        left_col, right_col = (_point_column(frame, term, source, aliases) for term in terms)
         if left_col is None or right_col is None:
             return None
         left, right = frame[left_col], frame[right_col]
@@ -131,7 +145,7 @@ def _project_joined_point_columns(
     frames = {n0._name: (seed, from_col), n2._name: (tail, to_col)}
     aligned: Dict[str, DataFrameT] = {}
     pandas_positions: Dict[str, List[int]] = {}
-    pandas_columns: Dict[str, object] = {}
+    pandas_columns: Dict[str, ExtensionArray] = {}
     projected: Dict[str, SeriesT] = {}
     for item in items:
         if not isinstance(item, (tuple, list)) or len(item) != 2:
@@ -140,7 +154,7 @@ def _project_joined_point_columns(
         if not isinstance(output, str) or not output or not isinstance(expression, str):
             return None
         parts = expression.split(".")
-        if len(parts) != 2 or not all(_IDENTIFIER.fullmatch(part) for part in parts):
+        if len(parts) != 2 or not all(is_bare_identifier(part) for part in parts):
             return None
         alias, column = parts
         if alias == edge._name and column in edges.columns:
@@ -199,7 +213,7 @@ def _try_point_rows(
     table, source = row.params["table"], row.params.get("source")
     if validate_schema:
         from graphistry.compute.chain import Chain
-        Chain(ops, validate=False).validate(collect_all=False)
+        Chain(ops)
         validate_chain_schema(g, ops, collect_all=False)
     adapter = _RowPipelineAdapter(g)
     adapter._gfql_rows_base_graph = g

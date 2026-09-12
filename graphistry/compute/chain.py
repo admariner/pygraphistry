@@ -981,7 +981,8 @@ def _chain_with_strictness(
         # POLARS_GPU = the same lazy engine with the GPU execution target.
         # (Dependency guards for polars / cudf_polars are above, pre-coercion.)
         if validate_schema:
-            Chain(ops if not isinstance(ops, Chain) else ops.chain, validate=False).validate(collect_all=False)
+            # Construct a fresh validator: the constructor validates children once.
+            Chain(ops if not isinstance(ops, Chain) else ops.chain)
             validate_graph_shape(self, ops, collect_all=False)  # pandas gets this via validate_chain_schema (#1889)
         from graphistry.compute.gfql.lazy.engine.polars.chain import chain_polars
         from graphistry.compute.gfql.lazy import target_mode, ExecutionTarget
@@ -1050,7 +1051,8 @@ def _chain_impl(
         ops = ops.chain
 
     if validate_schema:
-        Chain(ops, validate=False).validate(collect_all=False)
+        # Revalidate mutable operations on every execution, including reused Chains.
+        Chain(ops)
 
     from graphistry.compute.ast import ASTCall
 

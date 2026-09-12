@@ -27,7 +27,7 @@ if TYPE_CHECKING:
     from graphistry.compute.gfql.lazy.engine.polars.dtypes import PolarsFrame
 
 
-def _single_node_polars(g: Plottable, ops: Sequence[ASTObject], start_nodes: Optional[object] = None) -> Optional[Plottable]:
+def _single_node_polars(g: Plottable, ops: Sequence[ASTObject], start_nodes: Optional[DataFrameT] = None) -> Optional[Plottable]:
     """Select node rows, intersect start nodes, and attach the node alias marker."""
     import polars as pl
     from graphistry.Engine import Engine, EngineAbstract, df_to_engine

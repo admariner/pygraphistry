@@ -1,11 +1,12 @@
 """Resident-index source rows for native Polars point queries."""
-import re
 from typing import TYPE_CHECKING, Dict, List, Optional, Sequence
 
 if TYPE_CHECKING:
     import polars as pl
 
 from graphistry.Plottable import Plottable
+from graphistry.compute.typing import DataFrameT
+from graphistry.compute.gfql.identifiers import is_bare_identifier
 from graphistry.compute.ast import ASTCall, ASTEdge, ASTNode, ASTObject
 from graphistry.compute.chain_fast_paths import (
     _index_edge_rows, _index_node_rows, _record_native_seed_lane,
@@ -72,10 +73,10 @@ def _joined_projection(
         output, expr = item
         if not isinstance(output, str) or not isinstance(expr, str):
             return None
-        match = re.fullmatch(r"([A-Za-z_][A-Za-z_0-9]*)\.([A-Za-z_][A-Za-z_0-9]*)", expr)
-        if match is None:
+        parts = expr.split(".")
+        if len(parts) != 2 or not all(is_bare_identifier(part) for part in parts):
             return None
-        alias, column = match.groups()
+        alias, column = parts
         if alias not in frames or column not in frames[alias].columns:
             return None
         if singleton:
@@ -125,7 +126,7 @@ def _with_singleton_aliases(
     return out
 
 
-def _try_point_rows_polars(g: Plottable, ops: List[ASTObject], start_nodes: Optional[object] = None) -> Optional[Plottable]:
+def _try_point_rows_polars(g: Plottable, ops: List[ASTObject], start_nodes: Optional[DataFrameT] = None) -> Optional[Plottable]:
     import polars as pl
     from graphistry.compute.gfql.index.bindings import _policy_is_active
     from graphistry.compute.gfql.lazy import active_target, ExecutionTarget

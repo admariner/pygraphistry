@@ -401,3 +401,32 @@ def test_single_row_false_filter_still_validates_later_predicates():
     frame = pd.DataFrame({"first": [0], "second": [1]})
     with pytest.raises(GFQLSchemaError):
         _verify_scalar_filters_on_hit(frame, {"first": 1, "second": "wrong type"}, Engine.PANDAS)
+
+
+@pytest.mark.parametrize("expression", [
+    "coalesce(a.lhs, a.rhs)", "COALESCE(a.lhs,a.rhs)",
+    "CoAlEsCe ( a.lhs , a.rhs )", "coalesce(a . lhs, a.rhs)",
+])
+def test_point_coalesce_shared_grammar_keeps_null_semantics(engine, expression):
+    from graphistry.compute.chain_specializations.point_rows import _project_point_columns
+    frame = pd.DataFrame({"lhs": pd.Series([None, 3], dtype="Int64"),
+                          "rhs": pd.Series([7, 8], dtype="Int64")})
+    if engine == "cudf":
+        frame = pytest.importorskip("cudf").from_pandas(frame)
+    result = _project_point_columns(frame, select([("answer", expression)]), "a", ["a"])
+    assert result is not None
+    assert topd(result)["answer"].tolist() == [7, 3]
+    assert topd(frame)["lhs"].isna().tolist() == [True, False]
+
+
+@pytest.mark.parametrize("expression", [
+    "coalesce(DISTINCT a.lhs, a.rhs)", "coalesce(a.lhs)",
+    "coalesce(a.lhs, a.rhs, a.lhs)", "coalesce(a.lhs, 0)",
+    "coalesce(a.lhs, a.rhs) + 1", "coalesce(a.lhs.deep, a.rhs)",
+    "coalesce(a.lhs, coalesce(a.rhs, a.lhs))", "coalesce(a.`lhs`, a.rhs)",
+    "coalesce(a.lhs, b.rhs)", "coalesce(a.lhs, a.rhs", "coalesceX(a.lhs,a.rhs)",
+])
+def test_point_coalesce_shared_grammar_declines_outside_boundary(expression):
+    from graphistry.compute.chain_specializations.point_rows import _project_point_columns
+    frame = pd.DataFrame({"lhs": [1], "rhs": [2]})
+    assert _project_point_columns(frame, select([("answer", expression)]), "a", ["a", "b"]) is None

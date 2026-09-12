@@ -84,7 +84,7 @@ def test_singleton_result_can_replace_column_without_mutating_source(engine):
 @pytest.mark.parametrize("width", [15, 32, 33, 64])
 @pytest.mark.parametrize("chunked", [False, True])
 @pytest.mark.parametrize("positions", [
-    np.array([0, 1]), np.array([1, 2]), np.array([2, 0]), np.array([1, 1]),
+    np.array([], dtype=np.int64), np.array([0]), np.array([0, 1]), np.array([1, 2]), np.array([2, 0]), np.array([1, 1]),
     np.array([2, 0, 1, 2, 0, 1, 2, 0]), np.array([0] * 9),
     np.array([0, 3]), np.array([0, -1]), np.array([0, -4]),
     np.array([0, 2**64 - 1], dtype=np.uint64),

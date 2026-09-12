@@ -3,11 +3,11 @@ consult the same predicates, so a test that filters a shape corpus with them exe
 what the dispatcher admits."""
 # ruff: noqa: E501
 
-from typing import Dict, Literal, Optional, Sequence, Tuple, TYPE_CHECKING
+from typing import Literal, Optional, Sequence, Tuple, TYPE_CHECKING
 
 from graphistry.compute.ast import ASTObject, ASTNode, ASTEdge, ASTCall
 from graphistry.compute.chain_fast_paths import SeedRowsHow
-from graphistry.compute.typing import ArrayNamespace, DataFrameT
+from graphistry.compute.typing import ArrayNamespace, DataFrameT, ScalarFilterDict
 
 if TYPE_CHECKING:
     from graphistry.Engine import Engine
@@ -55,13 +55,14 @@ def native_fast_path_admits(
 
 
 def _indexed_kernel_admits(
-    seed_nodes: DataFrameT, gathered_edges: Optional[DataFrameT], n0f: Dict[str, object],
+    seed_nodes: DataFrameT, gathered_edges: Optional[DataFrameT], n0f: ScalarFilterDict,
     node: str, how: SeedRowsHow, ctx: Tuple["NodeIdIndex", "AdjacencyIndex", ArrayNamespace, "Engine"],
     n_nodes: int, n_edges: int,
 ) -> bool:
     """Whether the indexed connected-bindings kernel would have served this seeded 1-hop:
     its seed admission (binding-column integer seed, property-index hit, or a scan on a
     graph with fewer nodes than edges) and its frontier and gather cost gates."""
+    from graphistry.Engine import POLARS_ENGINES, is_polars_df
     from numbers import Integral
     from graphistry.compute.gfql.index.cost import cost_gate_frac
     _, adj, _, engine = ctx
@@ -70,11 +71,13 @@ def _indexed_kernel_admits(
     if not (seeded_on_binding or how == "property_index" or n_nodes < n_edges):
         return False
     frac = cost_gate_frac(engine)
-    if not hasattr(seed_nodes, "get_column"):
-        n_frontier = int(seed_nodes[node].nunique())
-    else:
+    if engine in POLARS_ENGINES:
+        import polars as pl
+        assert is_polars_df(seed_nodes) and isinstance(seed_nodes, pl.DataFrame)
         seed_ids = seed_nodes.get_column(node)
         n_frontier = len(seed_ids) if len(seed_ids) <= 1 else int(seed_ids.n_unique())
+    else:
+        n_frontier = int(seed_nodes[node].nunique())
     if n_frontier >= frac * adj.n_keys:
         return False
     return gathered_edges is not None and len(gathered_edges) < frac * n_edges

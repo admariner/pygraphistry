@@ -9,7 +9,7 @@ from typing import Any, Dict, Literal, Optional, Sequence, Tuple, TYPE_CHECKING,
 from graphistry.Plottable import Plottable
 from graphistry.Engine import is_polars_series
 from .ast import Direction
-from .typing import ArrayLike, ArrayNamespace, DataFrameT, SeriesT
+from .typing import ArrayLike, ArrayNamespace, DataFrameT, FilterDict, ScalarFilterDict, SeriesT
 
 if TYPE_CHECKING:
     from graphistry.Engine import Engine
@@ -115,7 +115,7 @@ def _tag_fast_path_aliases_eager(
     return nodes, edges
 
 
-def _seeded_scalar_filters(fd: Optional[Dict[str, Any]], df: DataFrameT) -> Optional[Dict[str, Any]]:
+def _seeded_scalar_filters(fd: Optional[FilterDict], df: DataFrameT) -> Optional[ScalarFilterDict]:
     """Resolve a filter dict to plain scalar column==value pairs, or None to bail
     to the general path. Mirrors filter_by_dict.resolve_filter_column exactly for
     the shapes it accepts: the cypher ``label__X: True`` form maps to ``type``
@@ -127,7 +127,7 @@ def _seeded_scalar_filters(fd: Optional[Dict[str, Any]], df: DataFrameT) -> Opti
     if not fd:
         return {}
     cols = set(df.columns)
-    out: Dict[str, Any] = {}
+    out: ScalarFilterDict = {}
     for k, v in fd.items():
         if not isinstance(v, (int, float, str, bool)):
             return None  # predicate / non-scalar -> bail to the general path
@@ -272,7 +272,7 @@ def _resident_node_id_index(
 
 
 def _seed_rows_via_prop_index_frame(
-    g: Plottable, nodes_df: DataFrameT, n0f: Dict[str, object], engine: "Engine",
+    g: Plottable, nodes_df: DataFrameT, n0f: ScalarFilterDict, engine: "Engine",
 ) -> Optional[DataFrameT]:
     """Candidate seed rows through a resident node PROPERTY index covering one of the
     scalar predicates, else None (the caller re-applies the whole filter either way)."""
@@ -299,9 +299,9 @@ SeededReturn = Tuple[DataFrameT, DataFrameT, DataFrameT, bool]
 
 
 def _seed_node_rows(
-    g: Plottable, nodes_df: DataFrameT, n0f: Dict[str, object], node: str,
+    g: Plottable, nodes_df: DataFrameT, n0f: ScalarFilterDict, node: str,
     nid_ctx: Optional[Tuple["NodeIdIndex", ArrayNamespace, "Engine"]],
-    filter_dict: Optional[Dict[str, object]] = None,
+    filter_dict: Optional[FilterDict] = None,
 ) -> Tuple[DataFrameT, SeedRowsHow]:
     """Rows matching the scalar seed filter: node-id index when the predicate is on the
     binding column, else a resident property index, else a scan. The canonical filter
@@ -318,9 +318,9 @@ def _seed_node_rows(
 
 
 def _seed_node_rows_from_index(
-    g: Plottable, nodes_df: DataFrameT, n0f: Dict[str, object], node: str,
+    g: Plottable, nodes_df: DataFrameT, n0f: ScalarFilterDict, node: str,
     nid_ctx: Optional[Tuple["NodeIdIndex", ArrayNamespace, "Engine"]],
-    filter_dict: Optional[Dict[str, object]] = None,
+    filter_dict: Optional[FilterDict] = None,
 ) -> Optional[Tuple[DataFrameT, SeedRowsHow]]:
     from graphistry.compute.gfql.index.bindings import _filter_frame
     engine = _frame_engine(nodes_df)
@@ -349,7 +349,7 @@ def _seed_node_rows_from_index(
 
 
 def _verify_scalar_filters_on_hit(
-    seed: DataFrameT, n0f: Dict[str, object], engine: "Engine",
+    seed: DataFrameT, n0f: ScalarFilterDict, engine: "Engine",
 ) -> Optional[DataFrameT]:
     """Check residual equalities on index hits, preserving typed filter errors."""
     from graphistry.Engine import Engine
@@ -398,7 +398,7 @@ def _verify_scalar_filters_on_hit(
     return seed[mask]
 
 
-def _index_answered_whole_filter(effective: Dict[str, object], n0f: Dict[str, object]) -> bool:
+def _index_answered_whole_filter(effective: FilterDict, n0f: ScalarFilterDict) -> bool:
     """Whether one unrewritten equality was fully answered by the index."""
     if len(effective) != 1 or len(n0f) != 1:
         return False
