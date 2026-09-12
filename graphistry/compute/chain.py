@@ -547,6 +547,9 @@ def combine_steps(
                     out_df[base] = out_df[c_x].where(out_df[c_x].notna(), out_df[c])
                 out_df = out_df.drop(columns=[c, c_x])
 
+    # Empty pandas merges can move the binding column behind aliases or properties.
+    if out_df.columns[0] != id:
+        out_df = out_df[[id, *[column for column in out_df.columns if column != id]]]
     return out_df
 
 

@@ -430,3 +430,22 @@ def test_point_coalesce_shared_grammar_declines_outside_boundary(expression):
     from graphistry.compute.chain_specializations.point_rows import _project_point_columns
     frame = pd.DataFrame({"lhs": [1], "rhs": [2]})
     assert _project_point_columns(frame, select([("answer", expression)]), "a", ["a", "b"]) is None
+
+
+@pytest.mark.parametrize("table,source", [("nodes", "b"), ("edges", "e")])
+@pytest.mark.parametrize("seed", [0, 1, 98])
+@pytest.mark.parametrize("disable_routes", [False, True])
+def test_empty_and_populated_traversals_keep_binding_first(engine, table, source, seed, disable_routes):
+    g = graph(engine)
+    ops = [n({"key": seed}, name="a"), e_forward(name="e"), n(name="b"),
+           rows(table=table, source=source)]
+    with routes_off(ROUTES if disable_routes else ()):
+        result = g.gfql(ops, engine=engine)
+    edge_columns = ["eid", "e", "s", "d", "type", "weight"]
+    expected_columns = (["key", "a", "b", "id", "kind", "value", "content"]
+                        if table == "nodes" else edge_columns)
+    expected_rows = {0: 2 if table == "nodes" else 3, 1: 1, 98: 0}
+    assert list(result._nodes.columns) == expected_columns
+    assert list(result._edges.columns) == edge_columns
+    assert len(result._nodes) == expected_rows[seed]
+    assert len(result._edges) == 0
