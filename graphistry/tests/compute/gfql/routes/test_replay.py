@@ -1,6 +1,7 @@
 """The existing-suite replay is a failing gate and includes every route switch."""
 import os
 from pathlib import Path
+import re
 import subprocess
 import sys
 
@@ -35,3 +36,25 @@ def test_replay_broadcasts_existing_tests_and_propagates_failures(tmp_path, fail
     assert [record[0] for record in records] == [*ROUTES, ",".join(ROUTES)]
     assert all("graphistry/tests/compute/test_chain.py" in record[1] for record in records)
     assert all((tmp_path / "logs" / f"{mode}.log").is_file() for mode in (*ROUTES, "all-off"))
+
+
+def _hosted_replay_job() -> str:
+    root = Path(__file__).resolve().parents[5]
+    workflow = (root / ".github/workflows/ci.yml").read_text()
+    job = re.search(r"^  gfql-routes-off:\n(.*?)(?=^  [\w-]+:|\Z)", workflow, re.M | re.S)
+    assert job is not None, "The hosted existing-suite replay job is missing"
+    return job.group(1)
+
+
+def test_hosted_replay_matrix_covers_every_registered_route():
+    job = _hosted_replay_job()
+    matrix = re.search(r"^        mode: \[(.*?)\]$", job, re.M)
+    assert matrix is not None, "Update this guard if the workflow matrix representation changes"
+    modes = [mode.strip() for mode in matrix.group(1).split(",")]
+    assert sorted(modes) == sorted([*ROUTES, "all-off"])
+
+
+def test_hosted_replay_failures_fail_the_workflow():
+    # The shell runner's nonzero exit must not be suppressed at job or step scope.
+    allowances = re.findall(r"^\s+continue-on-error:\s*(.*?)\s*$", _hosted_replay_job(), re.M)
+    assert all(value == "false" for value in allowances), allowances
