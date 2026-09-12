@@ -373,7 +373,10 @@ def _validate_call_op(
 
     required_node_cols = schema_effects.get('requires_node_cols')
     if required_node_cols is not None:
-        cols = required_node_cols(op.params) if callable(required_node_cols) else required_node_cols
+        if op.function == 'group_by':
+            cols = required_node_cols(op.params, available_row_columns)
+        else:
+            cols = required_node_cols(op.params) if callable(required_node_cols) else required_node_cols
         for col in cols:
             if col not in available_row_columns:
                 error = GFQLSchemaError(
@@ -422,6 +425,23 @@ def _apply_call_schema_effects(
 
     method_info = SAFELIST_V1[op.function]
     schema_effects = method_info.get('schema_effects') or {}
+
+    replaces_rows = op.function in {"select", "return_", "group_by"} or (
+        op.function == "with_" and not op.params.get("extend", False)
+    )
+    row_columns = edge_columns if active_row_table == "edges" else node_columns
+    if op.function == "drop_cols":
+        dropped = op.params.get("cols")
+        if isinstance(dropped, list):
+            row_columns.difference_update(dropped)
+    if replaces_rows:
+        prefixes = op.params.get("key_prefixes") if op.function == "group_by" else None
+        preserved = {
+            col for col in row_columns
+            if isinstance(col, str) and isinstance(prefixes, list)
+            and any(col.startswith(prefix) for prefix in prefixes)
+        }
+        row_columns.intersection_update(preserved)
 
     adds_node_cols = schema_effects.get('adds_node_cols')
     if adds_node_cols is not None:
