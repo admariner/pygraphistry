@@ -803,3 +803,105 @@ def test_gpu_temporal_guard_does_not_extract_string_scalars(monkeypatch):
     with target_mode(ExecutionTarget.GPU):
         assert _columns_have_temporal_constructor_text(pl.DataFrame({"s": ["plain"]}), ["s"]) is False
         assert _columns_have_temporal_constructor_text(pl.DataFrame({"s": ["date('2020-01-01')"]}), ["s"]) is True
+
+
+@pytest.mark.parametrize("size", [0, 1, 2, 33])
+@pytest.mark.parametrize("dtype,values", [
+    ("Int64", [2**53 + 1, 2**53 + 2]),
+    ("String", ["first", "second"]),
+    ("Boolean", [False, True]),
+    ("Float64", [0.0, float("nan")]),
+])
+@pytest.mark.parametrize("prefix_null", [False, True, "all"])
+def test_uniform_coalesce_preserves_values_without_projection_plan(size, dtype, values, prefix_null, monkeypatch):
+    import importlib
+    import polars as pl
+    from polars.testing import assert_frame_equal
+
+    native = importlib.import_module("graphistry.compute.gfql.lazy.engine.polars.row_pipeline")
+    selected = [None if prefix_null == "all" else values[i % 2] for i in range(size)]
+    table = pl.DataFrame({
+        "left": pl.Series([None] * size if prefix_null else selected, dtype=getattr(pl, dtype)),
+        "right": pl.Series(selected if prefix_null else [None] * size, dtype=getattr(pl, dtype)),
+        "a": [True] * size,
+    })
+    original = table.clone()
+    expected = pl.DataFrame({"value": pl.Series(selected, dtype=getattr(pl, dtype))})
+    expression_oracle = table.select(pl.coalesce("left", "right").alias("value"))
+    assert_frame_equal(expected, expression_oracle)
+
+    def unexpected_plan(*args, **kwargs):
+        raise AssertionError("Uniform projection entered an expression execution plan")
+
+    monkeypatch.setattr(native, "_project_preserving_height", unexpected_plan)
+    result = native.select_polars(graphistry.nodes(table), [("value", "coalesce(a.left, a.right)")])
+    assert result is not None
+    assert_frame_equal(result._nodes, expected)
+    assert_frame_equal(table, original)
+
+
+@pytest.mark.parametrize("items,columns,expected", [
+    ([("value", "coalesce(left, right)")], {"left": [None, 1], "right": [2, 3]}, [2, 1]),
+    ([("value", "coalesce(left, right)")], {"left": [1, 2], "right": [2.5, 3.5]}, [1.0, 2.0]),
+    ([("value", "coalesce(left + 1, right)")], {"left": [None, 1], "right": [2, 3]}, [2, 2]),
+    ([("value", "7")], {"left": [1, 2], "right": [2, 3]}, [7, 7]),
+])
+def test_eager_projection_decline_boundaries_keep_generic_results(items, columns, expected, monkeypatch):
+    import importlib
+    import polars as pl
+
+    native = importlib.import_module("graphistry.compute.gfql.lazy.engine.polars.row_pipeline")
+    original = native._project_preserving_height
+    calls = []
+
+    def observe(*args, **kwargs):
+        calls.append(True)
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(native, "_project_preserving_height", observe)
+    result = native.select_polars(graphistry.nodes(pl.DataFrame(columns)), items)
+    assert result is not None
+    assert result._nodes.to_dicts() == [{"value": value} for value in expected]
+    assert calls == [True]
+
+
+@pytest.mark.parametrize("size", [0, 1, 3, 33])
+def test_eager_column_projection_repeats_sources_and_preserves_order(size, monkeypatch):
+    import importlib
+    import polars as pl
+    from polars.testing import assert_frame_equal
+
+    native = importlib.import_module("graphistry.compute.gfql.lazy.engine.polars.row_pipeline")
+    values = [None if i % 2 else 2**53 + i for i in reversed(range(size))]
+    table = pl.DataFrame({"x": pl.Series(values, dtype=pl.Int64)})
+    def unexpected_plan(*args, **kwargs):
+        raise AssertionError("Column projection entered an expression execution plan")
+    monkeypatch.setattr(native, "_project_preserving_height", unexpected_plan)
+    result = native.select_polars(graphistry.nodes(table), [("second", "x"), ("first", "x")])
+    assert result is not None
+    expected = pl.DataFrame({"second": pl.Series(values, dtype=pl.Int64), "first": pl.Series(values, dtype=pl.Int64)})
+    assert_frame_equal(result._nodes, expected)
+
+
+@pytest.mark.parametrize("dtype,values", [
+    (pl.Categorical, ["a", "b"]),
+    (pl.Enum(["a", "b"]), ["a", "b"]),
+    (pl.List(pl.Int64), [[1, None], [2, 3]]),
+    (pl.Struct({"x": pl.Int64}), [{"x": 1}, {"x": None}]),
+])
+@pytest.mark.parametrize("size", [0, 2])
+def test_uniform_coalesce_preserves_nonprimitive_dtypes(dtype, values, size, monkeypatch):
+    import importlib
+    from polars.testing import assert_frame_equal
+
+    native = importlib.import_module("graphistry.compute.gfql.lazy.engine.polars.row_pipeline")
+    table = pl.DataFrame({"left": pl.Series([None] * size, dtype=dtype),
+                          "right": pl.Series(values[:size], dtype=dtype)})
+    expected = table.select(pl.coalesce("left", "right").alias("value"))
+    def unexpected_plan(*args, **kwargs):
+        raise AssertionError("Uniform typed coalesce entered an expression execution plan")
+    monkeypatch.setattr(native, "_project_preserving_height", unexpected_plan)
+    result = native.select_polars(graphistry.nodes(table), [("value", "coalesce(left, right)")])
+    assert result is not None
+    assert_frame_equal(result._nodes, expected)
+    assert result._nodes["value"].to_list() == values[:size]

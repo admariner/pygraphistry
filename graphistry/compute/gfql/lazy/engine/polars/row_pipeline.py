@@ -1231,6 +1231,48 @@ def _project_preserving_height(table: Any, exprs: List[Any]) -> Any:
     return table.select(exprs)
 
 
+def _project_eager_columns(
+    table: "pl.DataFrame", items: Sequence[SelectItem], exprs: Sequence["pl.Expr"],
+) -> Optional["pl.DataFrame"]:
+    """Gather columns and uniform coalesce inputs without an expression execution plan."""
+    import polars as pl
+    from graphistry.compute.gfql.expr_parser import FunctionCall, parse_expr
+
+    if not isinstance(table, pl.DataFrame) or not exprs:
+        return None
+    projected: List[pl.Series] = []
+    for item, expression in zip(items, exprs):
+        bare = expression.meta.undo_aliases()
+        output = expression.meta.output_name()
+        if bare.meta.is_column():
+            projected.append(table.get_column(bare.meta.output_name()).alias(output))
+            continue
+        source = item if isinstance(item, str) else item[1]
+        if not isinstance(source, str) or not source.lstrip().lower().startswith("coalesce"):
+            return None
+        parsed = parse_expr(source)
+        if not isinstance(parsed, FunctionCall) or parsed.name.lower() != "coalesce" or parsed.distinct:
+            return None
+        operands: List[pl.Series] = []
+        for argument in parsed.args:
+            lowered = lower_expr(argument, table.columns)
+            if lowered is None or not lowered.meta.is_column():
+                return None
+            operands.append(table.get_column(lowered.meta.output_name()))
+        if not operands or any(series.dtype != operands[0].dtype for series in operands[1:]):
+            return None
+        chosen = operands[-1]
+        for series in operands:
+            if series.null_count() == table.height:
+                continue
+            if series.null_count() != 0:
+                return None
+            chosen = series
+            break
+        projected.append(chosen.alias(output))
+    return pl.DataFrame(projected)
+
+
 def _project_polars(g: Plottable, items: Sequence[SelectItem], extend: bool) -> Optional[Plottable]:
     """Shared body of ``select_polars`` / ``with_columns_polars``; None if any item isn't
     lowerable (honest NIE, no pandas bridge)."""
@@ -1238,7 +1280,11 @@ def _project_polars(g: Plottable, items: Sequence[SelectItem], extend: bool) -> 
     exprs = _lower_with_schema(table, lambda: lower_select_items(items, list(table.columns)), node_id=g._node)
     if exprs is None:
         return None
-    out = table.with_columns(exprs) if extend else _project_preserving_height(table, exprs)
+    out = None if extend else _lower_with_schema(
+        table, lambda: _project_eager_columns(table, items, exprs), node_id=g._node,
+    )
+    if out is None:
+        out = table.with_columns(exprs) if extend else _project_preserving_height(table, exprs)
     if _select_emits_temporal_constructor_text(out):
         # decline (NIE): projected String column holds temporal-constructor text (date({...})
         # etc.) that pandas normalizes to ISO, not yet native — don't leak the raw text.

@@ -3835,7 +3835,7 @@ def _execute_seeded_typed_hop_fast_path(
         # value-identical contract).
         if is_polars:
             import polars as pl
-            out_frame = p_rows.select([pl.col(prop).alias(out) for out, _, prop in select_items])
+            out_frame = pl.DataFrame([p_rows.get_column(prop).alias(out) for out, _, prop in select_items])
         else:
             casts = _pivot_parity_casts(
                 p_rows, [(out, prop) for out, _, prop in select_items], node,
